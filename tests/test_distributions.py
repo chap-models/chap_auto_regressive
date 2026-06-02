@@ -1,7 +1,20 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
 
 from chap_auto_regressive.distributions import NegativeBinomial3, Normal, Poisson, nb_head
+
+
+def test_nb3_sampling_is_reproducible_from_key():
+    # The JAX key must control the draw: same key -> same samples, different key
+    # -> different samples (previously the key was ignored and scipy used the
+    # global RNG, making forecasts non-reproducible).
+    dist = NegativeBinomial3(jnp.array([5.0, 5.0, 5.0]), jnp.array([0.1, 0.1, 0.1]))
+    a = np.asarray(dist.sample(jax.random.PRNGKey(0), (50,)))
+    b = np.asarray(dist.sample(jax.random.PRNGKey(0), (50,)))
+    c = np.asarray(dist.sample(jax.random.PRNGKey(1), (50,)))
+    assert np.array_equal(a, b)
+    assert not np.array_equal(a, c)
 
 
 def test_negative_binomial3_direct_instantiation():

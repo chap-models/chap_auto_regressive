@@ -27,6 +27,28 @@ from .trainer import Trainer
 from .transforms import ZScaler, get_series, location_groups
 
 
+def _check_predict_inputs(historic: pd.DataFrame, future: pd.DataFrame, prediction_length: int) -> None:
+    """Validate the history/future frames before forecasting.
+
+    Args:
+        historic: Recent history including observed cases.
+        future: The periods to forecast, with covariates but no cases.
+        prediction_length: The fixed forecast horizon the model was built for.
+
+    Raises:
+        ValueError: If the two frames cover different location sets, or if any
+            location's future does not have exactly ``prediction_length`` periods.
+    """
+    if set(historic["location"].unique()) != set(future["location"].unique()):
+        raise ValueError("historic and future must cover the same set of locations")
+    counts = future.groupby("location").size()
+    if not (counts == prediction_length).all():
+        raise ValueError(
+            f"future must contain exactly prediction_length={prediction_length} periods per "
+            f"location, got period counts {sorted(set(counts.tolist()))}"
+        )
+
+
 def _forecast_frame(future: pd.DataFrame, samples: Any) -> pd.DataFrame:
     """Assemble the prediction output frame from per-location samples.
 
@@ -103,7 +125,7 @@ class FlaxPredictor:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        assert historic["location"].unique().tolist() == future["location"].unique().tolist()
+        _check_predict_inputs(historic, future, self.prediction_length)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]
@@ -275,7 +297,7 @@ class AutoRegressiveModel:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        assert historic["location"].unique().tolist() == future["location"].unique().tolist()
+        _check_predict_inputs(historic, future, self.prediction_length)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]

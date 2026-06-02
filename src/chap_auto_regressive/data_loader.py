@@ -49,6 +49,13 @@ def interpolate_nans(y: np.ndarray) -> np.ndarray:
     y = y.copy()
     for row in y:
         nans, x = nan_helper(row)
+        if nans.all():
+            # No observed cases at all for this location/window: there is nothing
+            # to interpolate from. Fill the auto-regressive input with zeros so it
+            # stays finite; the raw target keeps its NaNs, so the likelihood still
+            # skips these periods and they contribute no training signal.
+            row[nans] = 0.0
+            continue
         row[nans] = np.interp(x(nans), x(~nans), row[~nans])
     return y
 

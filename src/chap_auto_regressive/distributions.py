@@ -104,10 +104,16 @@ class NegativeBinomial3:
         return log_unnormalized_prob - log_normalization
 
     def sample(self, key: Any, shape: Any = ()) -> Any:
-        """Sample counts via the scipy negative binomial."""
+        """Sample counts via the scipy negative binomial, seeded from ``key``.
+
+        The JAX ``key`` is folded into a seed for scipy's generator so that draws
+        are reproducible and controlled by the model's RNG, rather than depending
+        on NumPy's global random state.
+        """
         if isinstance(shape, int):
             shape = (shape,)
-        samples = self.scipy_nbinom.rvs(shape + self.total_count.shape)
+        seed = int(jax.random.randint(key, (), 0, np.iinfo(np.int32).max))
+        samples = self.scipy_nbinom.rvs(shape + self.total_count.shape, random_state=seed)
         return np.moveaxis(samples, 0, -1)
 
     @property

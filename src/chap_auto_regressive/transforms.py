@@ -64,7 +64,14 @@ class ZScaler:
             A ``ZScaler`` holding the mean and standard deviation of those
             features over the location and time axes.
         """
-        return ZScaler(np.mean(data_set.predictors(0), axis=(0, 1)), np.std(data_set.predictors(0), axis=(0, 1)))
+        features = data_set.predictors(0)
+        mu = np.mean(features, axis=(0, 1))
+        std = np.std(features, axis=(0, 1))
+        # A zero-variance feature (a single location, or a static covariate such
+        # as a constant population) would otherwise divide by zero and produce
+        # inf/NaN inputs. Treat its scale as 1 so it standardizes to 0.
+        std = np.where(std == 0.0, 1.0, std)
+        return ZScaler(mu, std)
 
 
 def location_groups(data: pd.DataFrame) -> Iterator[tuple[Any, pd.DataFrame]]:
@@ -141,7 +148,7 @@ def period_start_date(period: str) -> datetime:
     text = str(period)
     if "/" in text:
         return datetime.fromisoformat(text.split("/")[0])
-    return pd.Period(text).start_time.to_pydatetime()
+    return datetime.strptime(text, "%Y-%m")
 
 
 def year_position_from_period(period: str) -> float:
