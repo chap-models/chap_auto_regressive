@@ -46,15 +46,5 @@ make lint      # ruff format + autofix, then type-check
 make docs      # serve the documentation locally
 ```
 
-Full documentation (usage, an auto-regression explainer, libraries, and the API
-reference) lives in `docs/` and is built with mkdocs.
-
-## Linting
-
-Config is derived from `chapkit` (ruff / mypy / pyright). `distributions.py` and
-`__init__.py` are fully type-checked; the numerical modules (`model`,
-`rnn_model`, `trainer`, `data_loader`, `transforms`) lean on untyped/dynamic
-library surfaces (chap_core's `BNPDataClass` attributes, jax/flax arrays) that
-strict type checkers can't follow, so they are excluded from mypy/pyright and
-from the docstring rule only — all other ruff rules still apply (see
-`pyproject.toml`).
+Full documentation — usage, data format, concepts, a glossary, libraries, and the
+API reference — lives in `docs/` and is built with mkdocs.
