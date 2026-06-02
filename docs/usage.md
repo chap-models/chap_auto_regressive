@@ -32,6 +32,23 @@ model.learning_rate = 1e-5
 model.n_iter = 1000            # training iterations
 ```
 
+### Configuration
+
+The model is configured by setting attributes after construction. All have
+defaults, so you only set the ones you need:
+
+| attribute | default | what it does |
+| --- | --- | --- |
+| `n_iter` | `1000` | Number of training epochs (full passes over the training windows). More iterations train longer and can fit better at the cost of time; very high values risk overfitting. |
+| `context_length` | `24` | How many past periods the model reads as history before forecasting — roughly a year is typical (12 months or 52 weeks). |
+| `prediction_length` | `3` | How many periods ahead to forecast (the horizon). |
+| `learning_rate` | `1e-4` | The Adam step size. Smaller is more stable but converges more slowly. |
+| `rnn_model_name` | `"base"` | Which architecture to build — `"base"`, or `"multi_value"` which also mixes the target across locations. |
+
+In the CHAP models these are set in `main.py`. There, `n_iter` is read from the
+`AR_N_ITER` environment variable (defaulting to `1000`) so the test suite can run
+a fast pass — see each model's README.
+
 ### Train
 
 `train` takes a `chap_core` `DataSet` of `FullData` (per-location time series with
