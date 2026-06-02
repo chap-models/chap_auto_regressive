@@ -50,6 +50,7 @@ convention = "google"
 # Modules, classes, methods, and functions are documented; __init__ constructors
 # and dunder methods may rely on the class docstring instead.
 "src/chap_ar/**/*.py" = ["D105", "D107"]
+"tests/**/*.py" = ["D"]
 
 [tool.ruff.format]
 quote-style = "double"

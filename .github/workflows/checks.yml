@@ -21,3 +21,6 @@ jobs:
 
       - name: Run checks (ruff + mypy + pyright)
         run: make check
+
+      - name: Run tests
+        run: make test
