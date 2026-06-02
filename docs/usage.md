@@ -45,9 +45,9 @@ defaults, so you only set the ones you need:
 | `learning_rate` | `1e-4` | The Adam step size. Smaller is more stable but converges more slowly. |
 | `rnn_model_name` | `"base"` | Which architecture to build — `"base"`, or `"multi_value"` which also mixes the target across locations. |
 
-In the CHAP models these are set in `main.py`. There, `n_iter` is read from the
-`AR_N_ITER` environment variable (defaulting to `1000`) so the test suite can run
-a fast pass — see each model's README.
+In the CHAP models these are set in `model.py`'s `build_model()`. There, `n_iter`
+is read from the `AR_N_ITER` environment variable (defaulting to `1000`) so the
+test suite can run a fast pass — see each model's README.
 
 All input and output is plain [pandas](https://pandas.pydata.org/) — `chap_auto_regressive`
 has no dependency on chap-core.
@@ -81,6 +81,24 @@ forecasts = predictor.predict(historic_df, future_df, num_samples=100)
 The output is **probabilistic**: each location/period gets a distribution of
 sampled case counts, which is what CHAP uses to build prediction intervals. See
 [Data format](data.md) for the full CSV contract.
+
+### Input requirements and errors
+
+`train` and `predict` validate their inputs and raise `ValueError` with a clear
+message rather than failing deep in the array or network code. The constraints:
+
+| Constraint | Applies to | Why |
+| --- | --- | --- |
+| Every location has the **same number of periods** | `train`, `predict` | The model works on a dense `(locations, periods, features)` array, which must be rectangular. |
+| Features (`rainfall`, `mean_temperature`, `population`) are **not NaN** | `train`, `predict` | They feed the network directly. (`disease_cases` *may* be NaN — gaps are interpolated for the auto-regressive input and skipped in the likelihood.) |
+| Prediction locations **match the training set exactly** | `predict` | The network learns a per-location embedding **by sorted position**, so an unseen or partial location set would silently reuse another location's embedding. The trained locations are stored with the model. |
+| History provides **at least `context_length`** periods per location | `predict` | The model reads `context_length` past periods; a shorter history would build a truncated window. |
+| Future provides **1…`prediction_length`** periods per location | `predict` | The model forecasts up to its trained horizon. A backtest may request fewer; more would extrapolate beyond what the network was trained for. |
+| `historic` includes `disease_cases`; `future` omits it | `predict` | History supplies the auto-regressive signal; the future is covariates-only. |
+
+These are why an `AutoRegressiveModel` cannot be reused across different region
+sets, and why a CHAP backtest must present the full set of training locations at
+every split.
 
 ## Inside a CHAP model
 
