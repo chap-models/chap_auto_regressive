@@ -29,7 +29,8 @@ theme:
 nav:
   - Home: index.md
   - Usage: usage.md
-  - Auto-regression explained: auto-regression.md
+  - Data format: data.md
+  - Concepts: concepts.md
   - Libraries used: libraries.md
   - API Reference: api-reference.md
 

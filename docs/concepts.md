@@ -1,4 +1,4 @@
-# Auto-regression explained
+# Concepts
 
 This page explains what regression and auto-regression are, why they fit disease
 forecasting, and exactly how `chap_ar` implements them.

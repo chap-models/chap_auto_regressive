@@ -33,8 +33,10 @@ forecasts = predictor.predict(historic_data, future_data)
 ## Where to go next
 
 - [Usage](usage.md) — install it, train and predict, and run it through CHAP.
-- [Auto-regression explained](auto-regression.md) — what regression and
-  auto-regression are, and exactly how this model handles them.
+- [Data format](data.md) — the input and output CSVs, with samples and an
+  input-vs-output breakdown.
+- [Concepts](concepts.md) — what regression and auto-regression are, and exactly
+  how this model handles them.
 - [Libraries used](libraries.md) — what each dependency does here.
 - [API Reference](api-reference.md) — the generated reference for the public API.
 
