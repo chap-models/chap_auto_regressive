@@ -8,19 +8,14 @@ from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
 
 from .data_loader import DataSet as DLDataSet
 from .data_loader import SimpleDataLoader
-from .distribution_head import DistributionHead, NBHead
-from .flax_model import ProbabilisticFlaxModel
+from .distributions import nb_head
 from .rnn_model import model_makers
 from .trainer import Trainer
 from .transforms import ZScaler, get_series
 
 
 class FlaxPredictor:
-    distribution_head: type[DistributionHead] = NBHead
-
-    def get_samples(self, eta, n_samples):
-        self.rng_key, sample_key = jax.random.split(self.rng_key)
-        return self.distribution_head(eta).sample(sample_key, (n_samples,))
+    distribution_head = staticmethod(nb_head)
 
     def __init__(self, params, transform, model, prediction_length, context_length):
         self.model = model
@@ -29,6 +24,10 @@ class FlaxPredictor:
         self.prediction_length = prediction_length
         self.context_length = context_length
         self.rng_key = jax.random.PRNGKey(1234)
+
+    def get_samples(self, eta, n_samples):
+        self.rng_key, sample_key = jax.random.split(self.rng_key)
+        return self.distribution_head(eta).sample(sample_key, (n_samples,))
 
     def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100):
         assert list(historic_data.keys()) == list(future_data.keys())
@@ -57,15 +56,20 @@ class FlaxPredictor:
         return cls(params, transform, *args, **kwargs)
 
 
-class ARModelTV1(ProbabilisticFlaxModel):
+class AutoRegressiveModel:
     rnn_model_name = "base"
     prediction_length = 3
     n_iter: int = 1000
     context_length = 24
-    do_validation = False
     learning_rate = 1e-4
-    distribution_head: type[DistributionHead] = NBHead
-    _validation_loader = None
+    distribution_head = staticmethod(nb_head)
+
+    def __init__(self, rng_key=jax.random.PRNGKey(100)):
+        self.rng_key = rng_key
+        self._model = None
+        self._n_locations = None
+        self._params = None
+        self._validation_loader = None
 
     def set_model(self, model):
         self._model = model

@@ -7,8 +7,7 @@ auto-regressive model never used. Only the distribution primitives needed by
 """
 
 from dataclasses import dataclass
-from functools import partial
-from typing import Any, Optional, Protocol, Sequence
+from typing import Any, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -17,22 +16,7 @@ import scipy
 from jax.scipy import stats
 
 
-class IsDistribution(Protocol):
-    """Structural type for a distribution with sampling and log-probability."""
-
-    def sample(self, key: Any, shape: Optional[tuple] = None) -> Any:
-        """Draw samples from the distribution."""
-        ...
-
-    def log_prob(self, x: Any) -> Any:
-        """Return the log probability of ``x``."""
-        ...
-
-
-distributionclass = partial(dataclass, frozen=True)
-
-
-@distributionclass
+@dataclass(frozen=True)
 class Normal:
     """Normal distribution parameterised by mean and standard deviation."""
 
@@ -55,7 +39,7 @@ class Normal:
         return stats.norm.logpdf(x, loc=self.mu, scale=self.sigma)
 
 
-@distributionclass
+@dataclass(frozen=True)
 class NegativeBinomial2:
     """Negative binomial in mean/dispersion (``mu``, ``alpha``) parameterisation."""
 
@@ -90,7 +74,6 @@ class NegativeBinomial2:
         return 1 / self.alpha
 
 
-@distributionclass
 class NegativeBinomial3:
     """Negative binomial parameterised by total count and logits."""
 
@@ -133,7 +116,7 @@ class NegativeBinomial3:
         return scipy.stats.nbinom(n=self.total_count, p=1.0 - self.probs)
 
 
-@distributionclass
+@dataclass(frozen=True)
 class Poisson:
     """Poisson distribution parameterised by rate."""
 
@@ -162,3 +145,15 @@ def skip_nan_distribution(dist: type) -> type:
             return res
 
     return SkipNaN
+
+
+# Negative-binomial head used by the auto-regressive model, NaN-tolerant.
+NBSkipNaN = skip_nan_distribution(NegativeBinomial3)
+
+
+def nb_head(eta: Any) -> Any:
+    """Interpret a model's two-channel output ``eta`` as a negative-binomial.
+
+    Channel 0 (passed through softplus) is the count and channel 1 is the logits.
+    """
+    return NBSkipNaN(jax.nn.softplus(eta[..., 0]), eta[..., 1])

@@ -44,14 +44,10 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["D104"]
-# Vendored legacy numerical model code: keep correctness/import/format rules,
-# relax docstrings (D), over-length commented-out lines (E501), and a couple of
-# original legacy-structure idioms (E731 lambda, F811 redefinition) rather than
-# rewriting working numerical code.
+# Numerical model code: keep correctness/import/format rules, relax only the
+# google-style docstring requirement (D) rather than documenting every helper.
 "src/chap_ar/data_loader.py" = ["D"]
-"src/chap_ar/distribution_head.py" = ["D"]
-"src/chap_ar/flax_model.py" = ["D"]
-"src/chap_ar/flax_model_v1.py" = ["D"]
+"src/chap_ar/model.py" = ["D"]
 "src/chap_ar/rnn_model.py" = ["D"]
 "src/chap_ar/trainer.py" = ["D"]
 "src/chap_ar/transforms.py" = ["D"]
@@ -72,13 +68,11 @@ no_implicit_optional = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# Vendored legacy numerical model files are not type-maintained. The extracted
-# distributions.py is checked normally; these originals are not.
+# These numerical modules lean on untyped/dynamic library surfaces (chap_core
+# BNPDataClass attributes, jax/flax arrays); distributions.py is checked normally.
 module = [
-    "chap_ar.flax_model",
-    "chap_ar.flax_model_v1",
+    "chap_ar.model",
     "chap_ar.data_loader",
-    "chap_ar.distribution_head",
     "chap_ar.rnn_model",
     "chap_ar.trainer",
     "chap_ar.transforms",
@@ -87,15 +81,13 @@ ignore_errors = true
 
 [tool.pyright]
 include = ["src/chap_ar"]
-# Vendored legacy numerical files lean on untyped/dynamic library surfaces
-# (chap_core BNPDataClass attributes, jax/flax arrays) that strict type checking
-# can't follow; the extracted distributions.py is checked normally.
+# These numerical modules lean on untyped/dynamic library surfaces (chap_core
+# BNPDataClass attributes, jax/flax arrays) that strict type checking can't
+# follow; distributions.py is checked normally.
 exclude = [
     "**/.venv",
-    "src/chap_ar/flax_model.py",
-    "src/chap_ar/flax_model_v1.py",
+    "src/chap_ar/model.py",
     "src/chap_ar/data_loader.py",
-    "src/chap_ar/distribution_head.py",
     "src/chap_ar/rnn_model.py",
     "src/chap_ar/trainer.py",
     "src/chap_ar/transforms.py",
