@@ -70,9 +70,12 @@ class ZScaler:
 def location_groups(data: pd.DataFrame) -> Iterator[tuple[Any, pd.DataFrame]]:
     """Yield each location's rows, sorted by time period.
 
-    Locations are yielded in first-seen order; within each location the rows are
-    sorted by ``time_period`` (lexicographic order is chronological for both the
-    monthly ``YYYY-MM`` and the weekly ``start/end`` formats).
+    Locations are yielded in sorted (canonical) label order so that a location
+    maps to the same embedding index regardless of the input row order — this
+    keeps ``train`` and ``predict`` aligned and matches the legacy model's
+    ``DataSet`` ordering. Within each location the rows are sorted by
+    ``time_period`` (lexicographic order is chronological for both the monthly
+    ``YYYY-MM`` and the weekly ``start/end`` formats).
 
     Args:
         data: The input frame with a ``location`` and ``time_period`` column.
@@ -80,7 +83,7 @@ def location_groups(data: pd.DataFrame) -> Iterator[tuple[Any, pd.DataFrame]]:
     Yields:
         ``(location, sub_frame)`` pairs.
     """
-    for location, sub in data.groupby("location", sort=False):
+    for location, sub in data.groupby("location", sort=True):
         yield location, sub.sort_values("time_period")
 
 
