@@ -44,7 +44,7 @@ docs:
 
 docs-build:
 	@echo ">>> Building documentation site"
-	@$(UV) run mkdocs build
+	@$(UV) run mkdocs build --strict
 
 clean:
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

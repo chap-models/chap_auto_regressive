@@ -13,12 +13,12 @@ Each window yields three arrays:
 - ``y`` — the raw target over the whole window, used as the training label.
 """
 
-from typing import Iterable, Tuple
+from typing import Callable, Iterable, Tuple
 
 import numpy as np
 
 
-def nan_helper(y):
+def nan_helper(y: np.ndarray) -> tuple:
     """Return helpers for locating NaNs in a 1-D array.
 
     Args:
@@ -32,7 +32,7 @@ def nan_helper(y):
     return np.isnan(y), lambda z: z.nonzero()[0]
 
 
-def interpolate_nans(y):
+def interpolate_nans(y: np.ndarray) -> np.ndarray:
     """Linearly interpolate over NaNs in each row of a 2-D array.
 
     Gaps in surveillance leave NaNs in the case series. Because the past target is
@@ -63,7 +63,7 @@ class DataSet:
     as windows are produced.
     """
 
-    def __init__(self, X, y, forecast_length, context_length=None):
+    def __init__(self, X: np.ndarray, y: np.ndarray, forecast_length: int, context_length: int | None = None):
         """Store the series and pre-compute the NaN-interpolated target.
 
         Args:
@@ -81,7 +81,7 @@ class DataSet:
         self._interpolated_y = interpolate_nans(y)
         self._transform = lambda x: x
 
-    def set_transform(self, transform):
+    def set_transform(self, transform: Callable) -> None:
         """Attach a feature transform applied to each produced window.
 
         Args:
@@ -90,7 +90,7 @@ class DataSet:
         """
         self._transform = transform
 
-    def predictors(self, i):
+    def predictors(self, i: int) -> np.ndarray:
         """Return one of the underlying arrays by index.
 
         Args:
@@ -102,11 +102,11 @@ class DataSet:
         """
         return (self._X, self._interpolated_y, self._y)[i]
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the number of windows that fit in the series."""
         return self._X.shape[1] - self._total_length + 1
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: int) -> tuple:
         """Return the training window starting at index ``item``.
 
         Args:
@@ -125,7 +125,7 @@ class DataSet:
             )
         ) + (self._y[:, start : start + self._total_length],)
 
-    def prediction_instance(self):
+    def prediction_instance(self) -> tuple:
         """Return the most recent window, for forecasting.
 
         Returns:
@@ -162,7 +162,14 @@ class DataLoader:
     training and validation windows.
     """
 
-    def __init__(self, X, y, forecast_length, context_length=None, do_validation=False):
+    def __init__(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        forecast_length: int,
+        context_length: int | None = None,
+        do_validation: bool = False,
+    ):
         """Build the windows and, optionally, the validation mask.
 
         Args:
@@ -188,7 +195,7 @@ class DataLoader:
             ] = False
         self.do_validation = do_validation
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Return the number of training windows (excluding any masked out)."""
         return np.sum(self.validation_mask)
 
@@ -205,7 +212,7 @@ class DataLoader:
             for start in permuted_starts
         )
 
-    def validation_set(self):
+    def validation_set(self) -> tuple:
         """Return the held-out validation window as ``(x, ar_y, y)``.
 
         Returns:

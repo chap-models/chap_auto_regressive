@@ -10,6 +10,8 @@ an auto-regressive join ([`ARAdder`][chap_ar.rnn_model.ARAdder]), and two stacke
 Array convention: ``batch x location x time x feature``.
 """
 
+from typing import Any
+
 import flax.linen as nn
 import jax.numpy as jnp
 from flax.linen import SimpleCell
@@ -41,7 +43,7 @@ class Preprocess(nn.Module):
     dropout_rate: float = 0.2
 
     @nn.compact
-    def __call__(self, x, training=False):
+    def __call__(self, x: Any, training: bool = False) -> Any:
         """Embed locations, concatenate, and project the features.
 
         Args:
@@ -76,7 +78,7 @@ class ARAdder(nn.Module):
     """
 
     @nn.compact
-    def __call__(self, x, y):
+    def __call__(self, x: Any, y: Any) -> Any:
         """Concatenate past targets onto the features.
 
         Args:
@@ -99,7 +101,7 @@ class MultiValueARAdder(nn.Module):
     """
 
     @nn.compact
-    def __call__(self, x, y):
+    def __call__(self, x: Any, y: Any) -> Any:
         """Concatenate the lagged target and a cross-location mix onto the features.
 
         Args:
@@ -141,7 +143,7 @@ class ARModel2(nn.Module):
     output_dim: int = 2
 
     @nn.compact
-    def __call__(self, x, y, training=False):
+    def __call__(self, x: Any, y: Any, training: bool = False) -> Any:
         """Run the encoder/decoder forward pass over a window.
 
         Args:

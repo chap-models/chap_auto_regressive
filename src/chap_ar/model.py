@@ -9,6 +9,7 @@ negative-binomial distribution that is then sampled.
 """
 
 import pickle
+from typing import Any, Callable
 
 import jax
 import jax.numpy as jnp
@@ -38,7 +39,7 @@ class FlaxPredictor:
 
     distribution_head = staticmethod(nb_head)
 
-    def __init__(self, params, transform, model, prediction_length, context_length):
+    def __init__(self, params: Any, transform: Callable, model: Any, prediction_length: int, context_length: int):
         self.model = model
         self._params = params
         self._transform = transform
@@ -46,7 +47,7 @@ class FlaxPredictor:
         self.context_length = context_length
         self.rng_key = jax.random.PRNGKey(1234)
 
-    def get_samples(self, eta, n_samples):
+    def get_samples(self, eta: Any, n_samples: int) -> Any:
         """Draw samples from the output distribution for each period.
 
         Args:
@@ -59,7 +60,7 @@ class FlaxPredictor:
         self.rng_key, sample_key = jax.random.split(self.rng_key)
         return self.distribution_head(eta).sample(sample_key, (n_samples,))
 
-    def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100):
+    def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100) -> DataSet:
         """Forecast the future periods as samples per location.
 
         The last ``context_length`` periods of history (with observed cases) are
@@ -90,7 +91,7 @@ class FlaxPredictor:
         time_period = next(iter(future_data.values())).time_period
         return DataSet({key: Samples(time_period, s) for key, s in zip(future_data.keys(), samples)})
 
-    def save(self, path):
+    def save(self, path: str) -> None:
         """Pickle the trained parameters and feature scaler to ``path``.
 
         Args:
@@ -100,7 +101,7 @@ class FlaxPredictor:
             pickle.dump((self._params, self._transform), f)
 
     @classmethod
-    def load(cls, path, *args, **kwargs):
+    def load(cls, path: str, *args: Any, **kwargs: Any) -> "FlaxPredictor":
         """Reload a predictor previously written by ``save``.
 
         Args:
@@ -150,7 +151,7 @@ class AutoRegressiveModel:
         self._params = None
         self._validation_loader = None
 
-    def set_model(self, model):
+    def set_model(self, model: Any) -> None:
         """Override the network instance instead of building one lazily.
 
         Args:
@@ -159,18 +160,18 @@ class AutoRegressiveModel:
         self._model = model
 
     @property
-    def model(self):
+    def model(self) -> Any:
         """The flax network, built lazily from ``rnn_model_name`` on first access."""
         if self._model is None:
             self._model = model_makers[self.rnn_model_name](self._n_locations)
         return self._model
 
-    def _get_dataset(self, data: DataSet[FullData]):
+    def _get_dataset(self, data: DataSet[FullData]) -> DLDataSet:
         """Build a windowed dataset from a CHAP dataset."""
         x, y = get_series(data)
         return DLDataSet(x, y, forecast_length=self.prediction_length, context_length=self.context_length)
 
-    def set_validation_data(self, historic_data: DataSet[FullData], future_data: DataSet[FullData]):
+    def set_validation_data(self, historic_data: DataSet[FullData], future_data: DataSet[FullData]) -> None:
         """Provide a held-out window for validation-loss reporting during training.
 
         The supplied history and future are concatenated into a single window and
@@ -190,7 +191,7 @@ class AutoRegressiveModel:
             DLDataSet(full_x, full_y, forecast_length=self.prediction_length, context_length=self.context_length)
         )
 
-    def train(self, data: DataSet[FullData]):
+    def train(self, data: DataSet[FullData]) -> FlaxPredictor:
         """Fit the model and return a predictor.
 
         Extracts features, fits the feature scaler, builds the windowed loader,
@@ -216,7 +217,7 @@ class AutoRegressiveModel:
         self._params = state.params
         return FlaxPredictor(self._params, self._transform, self.model, self.prediction_length, self.context_length)
 
-    def load_predictor(self, path):
+    def load_predictor(self, path: str) -> FlaxPredictor:
         """Load a saved predictor, attaching this model's architecture and lengths.
 
         Args:
@@ -228,7 +229,7 @@ class AutoRegressiveModel:
         """
         return FlaxPredictor.load(path, self.model, self.prediction_length, self.context_length)
 
-    def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100):
+    def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100) -> DataSet:
         """Forecast the future periods directly from this (trained) model.
 
         Equivalent to the predictor's ``predict``; useful when forecasting from a
@@ -258,7 +259,7 @@ class AutoRegressiveModel:
         time_period = next(iter(future_data.values())).time_period
         return DataSet({key: Samples(time_period, s) for key, s in zip(future_data.keys(), samples)})
 
-    def loss_func(self, eta_pred, y_true) -> jnp.ndarray:
+    def loss_func(self, eta_pred: Any, y_true: Any) -> jnp.ndarray:
         """Per-period negative log-likelihood of the observed cases.
 
         Args:
@@ -271,14 +272,14 @@ class AutoRegressiveModel:
         """
         return -self.distribution_head(eta_pred).log_prob(y_true[..., 1:])
 
-    def _loss(self, y_pred, y_true):
+    def _loss(self, y_pred: Any, y_true: Any) -> Any:
         """Aggregate the per-period loss, emphasizing the forecast horizon."""
         L = self.loss_func(y_pred, y_true)
         return jnp.mean(L[:, -self.prediction_length :]) / self.context_length + jnp.mean(
             L[:, -self.prediction_length :]
         )
 
-    def get_samples(self, eta, n_samples):
+    def get_samples(self, eta: Any, n_samples: int) -> Any:
         """Draw samples from the output distribution for each period.
 
         Args:

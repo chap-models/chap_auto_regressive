@@ -6,7 +6,7 @@ with ``jax.jit`` and uses ``jax.value_and_grad`` for the gradient; a small L2
 penalty on the weight matrices is added for regularization.
 """
 
-from typing import Optional, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import jax
 import jax.numpy as jnp
@@ -27,7 +27,7 @@ class TrainState(train_state.TrainState):
     key: jax.Array
 
 
-def l2_regularization(params, scale=1.0):
+def l2_regularization(params: Any, scale: float = 1.0) -> Any:
     """Sum of squared weight-matrix entries, used as an L2 penalty.
 
     Only rank-2 parameters (weight matrices) are penalized; biases and other
@@ -52,7 +52,13 @@ class Trainer:
     epochs.
     """
 
-    def __init__(self, model, n_iter=3000, learning_rate=1e-5, validation_loader: Optional[DataLoader] = None):
+    def __init__(
+        self,
+        model: Any,
+        n_iter: int = 3000,
+        learning_rate: float = 1e-5,
+        validation_loader: Optional[DataLoader] = None,
+    ):
         """Configure the trainer.
 
         Args:
@@ -67,7 +73,7 @@ class Trainer:
         self.learning_rate = learning_rate
         self._validation_loader = validation_loader
 
-    def train(self, data_loader: DataLoader, loss_fn):
+    def train(self, data_loader: DataLoader, loss_fn: Callable) -> "TrainState":
         """Train the model and return the final state.
 
         Initializes parameters from the first window, then repeatedly applies a

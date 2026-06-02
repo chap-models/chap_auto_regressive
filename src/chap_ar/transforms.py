@@ -10,6 +10,7 @@ Two concerns live here:
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 from chap_core.datatypes import FullData
@@ -33,7 +34,7 @@ class ZScaler:
     mu: np.ndarray
     std: np.ndarray
 
-    def __call__(self, x):
+    def __call__(self, x: tuple) -> tuple:
         """Standardize the feature array in a ``(features, ar_target)`` pair.
 
         Args:
@@ -48,7 +49,7 @@ class ZScaler:
         return x[:i] + ((x[i] - self.mu) / self.std,) + x[i + 1 :]
 
     @classmethod
-    def from_data(cls, data_set):
+    def from_data(cls, data_set: Any) -> "ZScaler":
         """Fit a scaler from a dataset's feature statistics.
 
         Args:
@@ -62,7 +63,7 @@ class ZScaler:
         return ZScaler(np.mean(data_set.predictors(0), axis=(0, 1)), np.std(data_set.predictors(0), axis=(0, 1)))
 
 
-def get_series(data: DataSet[FullData]):
+def get_series(data: DataSet[FullData]) -> tuple[np.ndarray, np.ndarray]:
     """Extract dense feature and target arrays from a CHAP dataset.
 
     For every location the function stacks four features per period — rainfall,
