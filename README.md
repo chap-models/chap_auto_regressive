@@ -43,7 +43,11 @@ lifted out of the upstream `jax_models.model_spec` so the HMC/Bayesian machinery
 make install   # uv sync
 make check     # ruff (format + lint) + mypy + pyright, no changes
 make lint      # ruff format + autofix, then type-check
+make docs      # serve the documentation locally
 ```
+
+Full documentation (usage, an auto-regression explainer, libraries, and the API
+reference) lives in `docs/` and is built with mkdocs.
 
 ## Linting
 

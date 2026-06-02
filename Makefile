@@ -1,4 +1,4 @@
-.PHONY: help install lint check test clean
+.PHONY: help install lint check test docs docs-build clean
 
 UV := $(shell command -v uv 2> /dev/null)
 
@@ -6,11 +6,13 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  install   Install dependencies"
-	@echo "  lint      Format and autofix, then type-check"
-	@echo "  check     Verify formatting and lint (no changes), then type-check"
-	@echo "  test      Run tests"
-	@echo "  clean     Remove caches and build artifacts"
+	@echo "  install     Install dependencies"
+	@echo "  lint        Format and autofix, then type-check"
+	@echo "  check       Verify formatting and lint (no changes), then type-check"
+	@echo "  test        Run tests"
+	@echo "  docs        Serve the documentation locally with live reload"
+	@echo "  docs-build  Build the documentation site"
+	@echo "  clean       Remove caches and build artifacts"
 
 install:
 	@echo ">>> Installing dependencies"
@@ -35,6 +37,14 @@ check:
 test:
 	@echo ">>> Running tests"
 	@$(UV) run pytest -q
+
+docs:
+	@echo ">>> Serving documentation at http://127.0.0.1:8000"
+	@$(UV) run mkdocs serve
+
+docs-build:
+	@echo ">>> Building documentation site"
+	@$(UV) run mkdocs build
 
 clean:
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
