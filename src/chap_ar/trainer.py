@@ -1,3 +1,11 @@
+"""The training loop.
+
+[`Trainer`][chap_ar.trainer.Trainer] fits a flax network by minimizing a
+caller-supplied loss with the Adam optimizer. The per-step update is JIT-compiled
+with ``jax.jit`` and uses ``jax.value_and_grad`` for the gradient; a small L2
+penalty on the weight matrices is added for regularization.
+"""
+
 from typing import Optional, Tuple
 
 import jax
@@ -10,21 +18,72 @@ from .data_loader import DataLoader
 
 
 class TrainState(train_state.TrainState):
+    """Flax training state extended with a PRNG key for dropout.
+
+    Attributes:
+        key: The PRNG key folded per step to drive dropout.
+    """
+
     key: jax.Array
 
 
 def l2_regularization(params, scale=1.0):
+    """Sum of squared weight-matrix entries, used as an L2 penalty.
+
+    Only rank-2 parameters (weight matrices) are penalized; biases and other
+    parameters are left out.
+
+    Args:
+        params: A pytree of model parameters.
+        scale: Multiplier applied to the summed squared weights.
+
+    Returns:
+        The scaled L2 penalty as a scalar.
+    """
     return sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params) if p.ndim == 2) * scale
 
 
 class Trainer:
+    """Fits a flax model to windowed data with Adam.
+
+    The trainer initializes the model from the first window, then for ``n_iter``
+    epochs runs a JIT-compiled gradient step over every training window. When a
+    validation loader is supplied, the validation loss is reported every ten
+    epochs.
+    """
+
     def __init__(self, model, n_iter=3000, learning_rate=1e-5, validation_loader: Optional[DataLoader] = None):
+        """Configure the trainer.
+
+        Args:
+            model: The flax module to fit.
+            n_iter: Number of epochs (full passes over the windows).
+            learning_rate: Adam learning rate.
+            validation_loader: Optional loader providing a held-out window for
+                periodic validation-loss reporting.
+        """
         self.model = model
         self.n_iter = n_iter
         self.learning_rate = learning_rate
         self._validation_loader = validation_loader
 
     def train(self, data_loader: DataLoader, loss_fn):
+        """Train the model and return the final state.
+
+        Initializes parameters from the first window, then repeatedly applies a
+        JIT-compiled Adam step over all windows. Each step adds an L2 penalty and
+        folds a fresh dropout key from the step counter for stochastic
+        regularization.
+
+        Args:
+            data_loader: Yields ``(x, ar_y, y)`` training windows.
+            loss_fn: Maps ``(eta, y)`` to a scalar loss (the negative
+                log-likelihood under the model's output distribution).
+
+        Returns:
+            The final [`TrainState`][chap_ar.trainer.TrainState] holding the
+            trained parameters.
+        """
         ix, iar_y, iy = peekable(iter(data_loader)).peek()
         params = self.model.init(jax.random.PRNGKey(0), ix, iar_y, training=False)
         dropout_key = jax.random.PRNGKey(40)

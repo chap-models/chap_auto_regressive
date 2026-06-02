@@ -105,6 +105,16 @@ flowchart TD
     N --> S["samples per period"]
 ```
 
+Reading the diagram top to bottom: the climate and seasonal **features** are
+combined with a learned **location embedding** in *Preprocess*, while the series'
+own **past cases** enter separately and are merged at the **auto-regressive
+join** — the step that makes the model auto-regressive. The joined sequence runs
+through the **encoder RNN** over the context window; its final hidden state seeds
+the **decoder RNN**, which steps across the forecast horizon. At each step the
+**output head** emits two numbers (`eta`) that `nb_head` turns into a **negative
+binomial**, which is **sampled** to produce that period's forecast. Each labelled
+box corresponds to one of the five stages listed above.
+
 ### 4. From network output to a distribution
 
 Counts are non-negative integers and are typically **overdispersed** (variance
@@ -120,10 +130,24 @@ observations simply contribute nothing to the loss instead of breaking it.
 
 ### 5. Training
 
-Training (`trainer.py`) minimizes the negative log-likelihood of the observed
-cases under the predicted negative binomial, using the `optax` Adam optimizer for
-`n_iter` steps. Because the whole pipeline is written in `jax`, the loss and its
-gradients are JIT-compiled.
+Training adjusts the network's weights to fit the data. It is driven by a **loss
+function** — a single number that measures how *wrong* the model's predictions
+are. Training repeatedly computes the loss, figures out which way to nudge each
+weight to lower it (the gradient), and takes a small step; do that enough times
+and the model fits.
+
+The choice of loss says what "wrong" means. Here the loss is the **negative
+log-likelihood**: for each period the model predicts a whole negative-binomial
+*distribution* over case counts, and the likelihood asks "how probable was the
+count that actually happened under that distribution?" Putting high probability
+on the real value is good, so we take the negative log (good fit → a low number)
+and average over periods, weighting the forecast horizon more heavily. A small
+L2 penalty on the weights is added to discourage overfitting.
+
+Concretely (`trainer.py`), the `optax` Adam optimizer minimizes this loss for
+`n_iter` epochs; because the whole pipeline is written in `jax`, the loss and its
+gradients are JIT-compiled. See the [glossary](glossary.md) for the terms used
+here.
 
 ### 6. Forecasting
 

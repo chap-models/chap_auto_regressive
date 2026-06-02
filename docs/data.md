@@ -13,6 +13,14 @@ flowchart TD
     PR --> O["predictions CSV (samples)"]
 ```
 
+Two paths share the trained model. **`train`** fits the model from a single
+labelled CSV (covariates plus observed `disease_cases`). **`predict`** then
+combines that model with the **historic** series (recent observed cases) and the
+**future** covariates (climate for the periods to forecast) to produce the
+samples CSV. The only structural difference between the two prediction inputs is
+that the future file has no `disease_cases` column — that is exactly what the
+model fills in.
+
 ## Input: training data
 
 One row per **location** and **time period**, with the climate covariates, the

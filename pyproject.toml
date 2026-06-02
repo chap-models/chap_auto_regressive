@@ -47,13 +47,9 @@ convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["D104"]
-# Numerical model code: keep correctness/import/format rules, relax only the
-# google-style docstring requirement (D) rather than documenting every helper.
-"src/chap_ar/data_loader.py" = ["D"]
-"src/chap_ar/model.py" = ["D"]
-"src/chap_ar/rnn_model.py" = ["D"]
-"src/chap_ar/trainer.py" = ["D"]
-"src/chap_ar/transforms.py" = ["D"]
+# Modules, classes, methods, and functions are documented; __init__ constructors
+# and dunder methods may rely on the class docstring instead.
+"src/chap_ar/**/*.py" = ["D105", "D107"]
 
 [tool.ruff.format]
 quote-style = "double"

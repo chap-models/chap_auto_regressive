@@ -31,6 +31,7 @@ nav:
   - Usage: usage.md
   - Data format: data.md
   - Concepts: concepts.md
+  - Glossary: glossary.md
   - Libraries used: libraries.md
   - API Reference: api-reference.md
 
@@ -71,9 +72,6 @@ plugins:
 
 extra_css:
   - stylesheets/extra.css
-
-extra_javascript:
-  - javascripts/mermaid-zoom.js
 
 extra:
   social:

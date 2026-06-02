@@ -1,3 +1,13 @@
+"""The public model and its trained predictor.
+
+[`AutoRegressiveModel`][chap_ar.model.AutoRegressiveModel] is the estimator CHAP
+trains; its ``train`` method returns a
+[`FlaxPredictor`][chap_ar.model.FlaxPredictor] that produces probabilistic
+forecasts. Both share the same output head — the network emits two channels per
+period (``eta``) which [`nb_head`][chap_ar.distributions.nb_head] turns into a
+negative-binomial distribution that is then sampled.
+"""
+
 import pickle
 
 import jax
@@ -15,6 +25,17 @@ from .transforms import ZScaler, get_series
 
 
 class FlaxPredictor:
+    """A trained model that turns history and future covariates into samples.
+
+    Produced by [`AutoRegressiveModel.train`][chap_ar.model.AutoRegressiveModel.train].
+    It holds the fitted network parameters and the feature scaler, and can be
+    pickled to disk and reloaded.
+
+    Attributes:
+        distribution_head: Maps the network's two-channel output to a sampling
+            distribution (the negative-binomial head).
+    """
+
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, params, transform, model, prediction_length, context_length):
@@ -26,10 +47,34 @@ class FlaxPredictor:
         self.rng_key = jax.random.PRNGKey(1234)
 
     def get_samples(self, eta, n_samples):
+        """Draw samples from the output distribution for each period.
+
+        Args:
+            eta: The network's per-period output, shape ``(..., periods, 2)``.
+            n_samples: Number of samples to draw per period.
+
+        Returns:
+            Sampled counts, with a leading sample axis of length ``n_samples``.
+        """
         self.rng_key, sample_key = jax.random.split(self.rng_key)
         return self.distribution_head(eta).sample(sample_key, (n_samples,))
 
     def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100):
+        """Forecast the future periods as samples per location.
+
+        The last ``context_length`` periods of history (with observed cases) are
+        concatenated with the future covariates, run through the network, and the
+        forecast-horizon outputs are sampled.
+
+        Args:
+            historic_data: Recent history including observed ``disease_cases``.
+            future_data: The periods to forecast, with covariates but no cases.
+            num_samples: Number of samples to draw per location and period.
+
+        Returns:
+            A ``DataSet`` of `Samples`, one entry
+            per location, covering the future periods.
+        """
         assert list(historic_data.keys()) == list(future_data.keys())
         x, _ = get_series(future_data)
         prev_values, prev_y = get_series(historic_data)
@@ -46,17 +91,51 @@ class FlaxPredictor:
         return DataSet({key: Samples(time_period, s) for key, s in zip(future_data.keys(), samples)})
 
     def save(self, path):
+        """Pickle the trained parameters and feature scaler to ``path``.
+
+        Args:
+            path: Destination file path.
+        """
         with open(path, "wb") as f:
             pickle.dump((self._params, self._transform), f)
 
     @classmethod
     def load(cls, path, *args, **kwargs):
+        """Reload a predictor previously written by ``save``.
+
+        Args:
+            path: Path to the pickled parameters and scaler.
+            *args: Forwarded to the constructor (``model``, ``prediction_length``,
+                ``context_length``).
+            **kwargs: Forwarded to the constructor.
+
+        Returns:
+            The reconstructed ``FlaxPredictor``.
+        """
         with open(path, "rb") as f:
             params, transform = pickle.load(f)
         return cls(params, transform, *args, **kwargs)
 
 
 class AutoRegressiveModel:
+    """Deep auto-regressive forecaster for disease case counts.
+
+    The estimator wraps the [`ARModel2`][chap_ar.rnn_model.ARModel2] network: it
+    extracts and scales features, slices each location's series into
+    ``context_length + prediction_length`` windows, and fits the network by
+    maximizing the negative-binomial likelihood of the observed cases. Calling
+    ``train`` returns a [`FlaxPredictor`][chap_ar.model.FlaxPredictor].
+
+    Attributes:
+        rnn_model_name: Which [`model_makers`][chap_ar.rnn_model.model_makers]
+            architecture to build (``"base"`` or ``"multi_value"``).
+        prediction_length: Number of periods to forecast ahead.
+        n_iter: Number of training epochs.
+        context_length: Number of past periods read as context.
+        learning_rate: Adam learning rate.
+        distribution_head: Maps the network output to the sampling distribution.
+    """
+
     rnn_model_name = "base"
     prediction_length = 3
     n_iter: int = 1000
@@ -72,19 +151,35 @@ class AutoRegressiveModel:
         self._validation_loader = None
 
     def set_model(self, model):
+        """Override the network instance instead of building one lazily.
+
+        Args:
+            model: A flax module to use in place of the default architecture.
+        """
         self._model = model
 
     @property
     def model(self):
+        """The flax network, built lazily from ``rnn_model_name`` on first access."""
         if self._model is None:
             self._model = model_makers[self.rnn_model_name](self._n_locations)
         return self._model
 
     def _get_dataset(self, data: DataSet[FullData]):
+        """Build a windowed dataset from a CHAP dataset."""
         x, y = get_series(data)
         return DLDataSet(x, y, forecast_length=self.prediction_length, context_length=self.context_length)
 
     def set_validation_data(self, historic_data: DataSet[FullData], future_data: DataSet[FullData]):
+        """Provide a held-out window for validation-loss reporting during training.
+
+        The supplied history and future are concatenated into a single window and
+        wrapped in a loader the trainer evaluates periodically.
+
+        Args:
+            historic_data: History including observed cases.
+            future_data: The matching future periods with their covariates.
+        """
         x, y = get_series(historic_data)
         x = x[:, -self.context_length :]
         y = y[:, -self.context_length :]
@@ -96,6 +191,19 @@ class AutoRegressiveModel:
         )
 
     def train(self, data: DataSet[FullData]):
+        """Fit the model and return a predictor.
+
+        Extracts features, fits the feature scaler, builds the windowed loader,
+        and runs the [`Trainer`][chap_ar.trainer.Trainer] to minimize the negative
+        log-likelihood.
+
+        Args:
+            data: Training series per location, with observed ``disease_cases``.
+
+        Returns:
+            A [`FlaxPredictor`][chap_ar.model.FlaxPredictor] holding the trained
+            parameters and the fitted scaler.
+        """
         data_set = self._get_dataset(data)
         self._transform = ZScaler.from_data(data_set)
         data_set.set_transform(self._transform)
@@ -109,9 +217,32 @@ class AutoRegressiveModel:
         return FlaxPredictor(self._params, self._transform, self.model, self.prediction_length, self.context_length)
 
     def load_predictor(self, path):
+        """Load a saved predictor, attaching this model's architecture and lengths.
+
+        Args:
+            path: Path to a file written by
+                [`FlaxPredictor.save`][chap_ar.model.FlaxPredictor.save].
+
+        Returns:
+            The reconstructed [`FlaxPredictor`][chap_ar.model.FlaxPredictor].
+        """
         return FlaxPredictor.load(path, self.model, self.prediction_length, self.context_length)
 
     def predict(self, historic_data: DataSet, future_data: DataSet, num_samples: int = 100):
+        """Forecast the future periods directly from this (trained) model.
+
+        Equivalent to the predictor's ``predict``; useful when forecasting from a
+        model trained in the same process.
+
+        Args:
+            historic_data: Recent history including observed ``disease_cases``.
+            future_data: The periods to forecast, with covariates but no cases.
+            num_samples: Number of samples per location and period.
+
+        Returns:
+            A ``DataSet`` of `Samples` over the
+            future periods.
+        """
         assert list(historic_data.keys()) == list(future_data.keys())
         x, _ = get_series(future_data)
         prev_values, prev_y = get_series(historic_data)
@@ -128,14 +259,34 @@ class AutoRegressiveModel:
         return DataSet({key: Samples(time_period, s) for key, s in zip(future_data.keys(), samples)})
 
     def loss_func(self, eta_pred, y_true) -> jnp.ndarray:
+        """Per-period negative log-likelihood of the observed cases.
+
+        Args:
+            eta_pred: The network output, shape ``(..., periods, 2)``.
+            y_true: The window's target; ``y_true[..., 0]`` is the lagged value, so
+                the likelihood is evaluated against ``y_true[..., 1:]``.
+
+        Returns:
+            The element-wise negative log-likelihood under the negative binomial.
+        """
         return -self.distribution_head(eta_pred).log_prob(y_true[..., 1:])
 
     def _loss(self, y_pred, y_true):
+        """Aggregate the per-period loss, emphasizing the forecast horizon."""
         L = self.loss_func(y_pred, y_true)
         return jnp.mean(L[:, -self.prediction_length :]) / self.context_length + jnp.mean(
             L[:, -self.prediction_length :]
         )
 
     def get_samples(self, eta, n_samples):
+        """Draw samples from the output distribution for each period.
+
+        Args:
+            eta: The network's per-period output, shape ``(..., periods, 2)``.
+            n_samples: Number of samples to draw per period.
+
+        Returns:
+            Sampled counts, with a leading sample axis of length ``n_samples``.
+        """
         self.rng_key, sample_key = jax.random.split(self.rng_key)
         return self.distribution_head(eta).sample(sample_key, (n_samples,))
