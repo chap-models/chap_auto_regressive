@@ -93,6 +93,18 @@ The architecture (`rnn_model.ARModel2`) processes a window in stages:
    across the forecast horizon, where observed cases are no longer available.
 5. **Output head** — dense layers emit two numbers per period (`eta`).
 
+```mermaid
+flowchart TD
+    F["features: rainfall, temperature, population, day-of-year"] --> P["Preprocess + location embedding"]
+    Y["past cases (y)"] --> J["auto-regressive join"]
+    P --> J
+    J --> E["encoder RNN over the context"]
+    E -->|hidden state| D["decoder RNN over the horizon"]
+    D --> H["output head: 2 channels = eta"]
+    H --> N["nb_head: negative binomial"]
+    N --> S["samples per period"]
+```
+
 ### 4. From network output to a distribution
 
 Counts are non-negative integers and are typically **overdispersed** (variance
@@ -125,6 +137,55 @@ At prediction time the model:
 
 The result is a set of sampled trajectories per location — a probabilistic
 forecast that CHAP turns into medians and prediction intervals.
+
+## A worked example
+
+Take one location, **Bokeo**, with monthly data. The model reads
+`context_length = 12` months of history and forecasts `prediction_length = 3`
+months ahead. (The intermediate numbers below are illustrative — the actual
+values depend on the trained weights.)
+
+**1. Input — the tail of the history:**
+
+```csv
+time_period,rainfall,mean_temperature,disease_cases,population,location
+...
+2023-10,210.5,25.1,14.0,75049.56,Bokeo
+2023-11,180.2,24.3,11.0,75049.56,Bokeo
+2023-12,90.7,22.0,7.0,75049.56,Bokeo
+```
+
+**2. Each month becomes a feature vector** — the three covariates plus the
+day-of-year position of the month's start — then z-scored across the series. For
+`2023-12` (day-of-year ≈ 335, so `day_pos = 335/365 ≈ 0.92`):
+
+```
+raw      = [rainfall 90.7, mean_temperature 22.0, population 75049.56, day_pos 0.92]
+z-scored = [-0.8,          -1.1,                  0.0,                  1.6]
+```
+
+(`population` is constant for a location, so its z-score is ~0.)
+
+**3. The window is rolled through the RNN.** The 12 context months — with their
+observed cases fed in via the auto-regressive join — go through the encoder; the
+decoder then steps across `2024-01 … 2024-03`, where cases are unknown.
+
+**4. Each forecast month's two outputs become a distribution.** Say the head
+emits `eta = [1.4, -0.2]` for `2024-01`. `nb_head` turns that into a negative
+binomial with `count = softplus(1.4) ≈ 1.6` and `logits = -0.2` — a distribution
+centred near 3 cases but with a fat upper tail.
+
+**5. Sampling 100 times produces the output row:**
+
+```csv
+time_period,sample_0,sample_1,...,sample_99,location
+2024-01,4,2,...,3,Bokeo
+```
+
+Sorted, those samples cluster around a **median of ~3**, with most mass in 1–5 and
+an occasional 8–10 in the tail. See
+[Interpreting the forecast](data.md#interpreting-the-forecast) for turning that
+into a point estimate and an interval.
 
 ## In one sentence
 

@@ -1,0 +1,37 @@
+/* Larger, more legible mermaid diagrams */
+.mermaid {
+  font-size: 17px;
+  text-align: center;
+  cursor: zoom-in;
+}
+
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Make node labels readable against the dark/light node fills */
+.mermaid .nodeLabel,
+.mermaid .edgeLabel {
+  font-size: 16px;
+}
+
+/* Click-to-enlarge fullscreen overlay */
+.mermaid-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(0, 0, 0, 0.9);
+  cursor: zoom-out;
+}
+
+.mermaid-overlay svg {
+  max-width: 96vw;
+  max-height: 92vh;
+  width: auto;
+  height: auto;
+}

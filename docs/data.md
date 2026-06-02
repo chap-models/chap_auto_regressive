@@ -3,10 +3,14 @@
 This page shows exactly what goes **in** and what comes **out**, with real sample
 CSVs. The model speaks CHAP's CSV format: one row per location and time period.
 
-```
-training CSV ──▶ train ──▶ trained model
-                                  │
-historic CSV + future CSV ──▶ predict ──▶ predictions CSV (samples)
+```mermaid
+flowchart TD
+    T["training CSV"] --> TR["train"]
+    TR --> M["trained model"]
+    H["historic CSV"] --> PR["predict"]
+    FU["future CSV"] --> PR
+    M --> PR
+    PR --> O["predictions CSV (samples)"]
 ```
 
 ## Input: training data
@@ -82,9 +86,32 @@ time_period,sample_0,sample_1,sample_2,...,sample_99,location
 
 (100 sample columns are shown abbreviated as `...`.) Each row is one location at
 one future period; the 100 values are draws from the predicted negative-binomial
-distribution for that period. To get a point forecast and an interval you would,
-per row, take e.g. the median and the 10th/90th percentiles across the
-`sample_*` columns.
+distribution for that period.
+
+## Interpreting the forecast
+
+Each row is 100 equally likely sampled case counts for one location and period.
+Summarize them however your downstream needs — for example with pandas:
+
+```python
+import pandas as pd
+
+df = pd.read_csv("predictions.csv")
+samples = df.filter(like="sample_")
+df["median"] = samples.median(axis=1)
+df["lower"] = samples.quantile(0.10, axis=1)
+df["upper"] = samples.quantile(0.90, axis=1)
+```
+
+- The **median** across the samples is the natural point forecast.
+- The gap between **lower** and **upper** is an 80% prediction interval — wide when
+  the model is uncertain, narrow when it is confident.
+- Because the model uses a negative binomial rather than a Poisson, the samples are
+  **overdispersed**: their spread grows with the level, so high-incidence periods
+  get appropriately wider intervals instead of a falsely precise one.
+
+When the model runs inside CHAP this summarization is done for you — CHAP reads the
+samples and produces the medians and intervals it displays.
 
 ## Input vs output at a glance
 
