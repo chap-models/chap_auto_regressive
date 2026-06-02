@@ -53,6 +53,8 @@ numerically identical to the legacy model (verified to `0.0` difference).
 | `model.set_validation_data` | Cryptic NumPy concat dimension error | A validation `future` without `disease_cases` was accepted, then failed downstream | Raises a clear `ValueError` — validation needs observed cases as labels |
 | `model.train` (validation scaling) | Validation loss not comparable to training loss | The fitted scaler was never applied to the validation window, so it ran on raw features | `train` attaches the fitted scaler to the validation loader |
 | `transforms.location_groups` | Location→embedding index depended on input row order | Grouping used first-seen (CSV) order rather than a canonical order | Locations are grouped in sorted order, matching the legacy `DataSet` and keeping `train`/`predict` aligned |
+| `model.predict` (location identity) | Valid-looking forecasts for the **wrong** locations | A predictor did not remember its training locations, so an unseen set (e.g. C/D) reused the embeddings learned for A/B by position | `train` records the canonical training locations (persisted on save); prediction/validation frames must cover exactly that set |
+| `transforms.get_series` | `ValueError: setting an array element with a sequence` | Locations with differing period counts (ragged input) broke the dense array construction | A targeted `ValueError` names the per-location period counts before the array is built |
 
 ## Environment
 

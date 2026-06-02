@@ -1,6 +1,30 @@
 import numpy as np
+import pandas as pd
+import pytest
 
-from chap_auto_regressive.transforms import ZScaler, period_start_date, year_position_from_period
+from chap_auto_regressive.transforms import ZScaler, get_series, period_start_date, year_position_from_period
+
+
+def _rows(location, periods):
+    return [
+        {
+            "location": location,
+            "time_period": p,
+            "rainfall": 1.0,
+            "mean_temperature": 20.0,
+            "population": 1000.0,
+            "disease_cases": 1.0,
+        }
+        for p in periods
+    ]
+
+
+def test_get_series_rejects_ragged_period_counts():
+    # Public dataframe input with differing period counts per location must raise
+    # a targeted error naming the counts, not a low-level NumPy array error.
+    ragged = pd.DataFrame(_rows("A", ["2020-01", "2020-02", "2020-03"]) + _rows("B", ["2020-01", "2020-02"]))
+    with pytest.raises(ValueError, match="same number of periods"):
+        get_series(ragged)
 
 
 def test_zscaler_standardizes_first_element():

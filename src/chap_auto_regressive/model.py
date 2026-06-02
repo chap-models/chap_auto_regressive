@@ -27,20 +27,36 @@ from .trainer import Trainer
 from .transforms import ZScaler, get_series, location_groups
 
 
-def _check_predict_inputs(historic: pd.DataFrame, future: pd.DataFrame, prediction_length: int) -> None:
+def _check_predict_inputs(
+    historic: pd.DataFrame,
+    future: pd.DataFrame,
+    prediction_length: int,
+    training_locations: list | None = None,
+) -> None:
     """Validate the history/future frames before forecasting.
 
     Args:
         historic: Recent history including observed cases.
         future: The periods to forecast, with covariates but no cases.
         prediction_length: The fixed forecast horizon the model was built for.
+        training_locations: The canonical (sorted) locations the model was trained
+            on. When provided, the frames must cover exactly this set — the model
+            learns per-location embeddings by sorted index, so an unseen location
+            would silently borrow another location's embedding.
 
     Raises:
-        ValueError: If the two frames cover different location sets, or if any
-            location's future does not have exactly ``prediction_length`` periods.
+        ValueError: If the two frames cover different location sets, if any
+            location's future does not have exactly ``prediction_length`` periods,
+            or if the locations differ from ``training_locations``.
     """
-    if set(historic["location"].unique()) != set(future["location"].unique()):
+    historic_locations = set(historic["location"].unique())
+    if historic_locations != set(future["location"].unique()):
         raise ValueError("historic and future must cover the same set of locations")
+    if training_locations is not None and sorted(historic_locations) != sorted(training_locations):
+        raise ValueError(
+            "prediction locations must match the training locations "
+            f"{sorted(training_locations)}, but got {sorted(historic_locations)}"
+        )
     counts = future.groupby("location").size()
     if not (counts == prediction_length).all():
         raise ValueError(
@@ -90,12 +106,24 @@ class FlaxPredictor:
 
     distribution_head = staticmethod(nb_head)
 
-    def __init__(self, params: Any, transform: Callable, model: Any, prediction_length: int, context_length: int):
+    def __init__(
+        self,
+        params: Any,
+        transform: Callable,
+        model: Any,
+        prediction_length: int,
+        context_length: int,
+        locations: list | None = None,
+    ):
         self.model = model
         self._params = params
         self._transform = transform
         self.prediction_length = prediction_length
         self.context_length = context_length
+        # Canonical (sorted) training locations; predictions must cover this exact
+        # set because the network's per-location embeddings are indexed by sorted
+        # position. None only for predictors loaded from a legacy pickle.
+        self.locations = list(locations) if locations is not None else None
         self.rng_key = jax.random.PRNGKey(1234)
 
     def get_samples(self, eta: Any, n_samples: int) -> Any:
@@ -127,7 +155,7 @@ class FlaxPredictor:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        _check_predict_inputs(historic, future, self.prediction_length)
+        _check_predict_inputs(historic, future, self.prediction_length, self.locations)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]
@@ -142,20 +170,20 @@ class FlaxPredictor:
         return _forecast_frame(future, samples)
 
     def save(self, path: str) -> None:
-        """Pickle the trained parameters and feature scaler to ``path``.
+        """Pickle the trained parameters, feature scaler and locations to ``path``.
 
         Args:
             path: Destination file path.
         """
         with open(path, "wb") as f:
-            pickle.dump((self._params, self._transform), f)
+            pickle.dump((self._params, self._transform, self.locations), f)
 
     @classmethod
     def load(cls, path: str, *args: Any, **kwargs: Any) -> "FlaxPredictor":
         """Reload a predictor previously written by ``save``.
 
         Args:
-            path: Path to the pickled parameters and scaler.
+            path: Path to the pickled parameters, scaler and locations.
             *args: Forwarded to the constructor (``model``, ``prediction_length``,
                 ``context_length``).
             **kwargs: Forwarded to the constructor.
@@ -164,8 +192,14 @@ class FlaxPredictor:
             The reconstructed ``FlaxPredictor``.
         """
         with open(path, "rb") as f:
-            params, transform = pickle.load(f)
-        return cls(params, transform, *args, **kwargs)
+            payload = pickle.load(f)
+        # Predictors pickled before locations were tracked hold a 2-tuple.
+        if len(payload) == 2:
+            params, transform = payload
+            locations = None
+        else:
+            params, transform, locations = payload
+        return cls(params, transform, *args, locations=locations, **kwargs)
 
 
 class AutoRegressiveModel:
@@ -204,6 +238,8 @@ class AutoRegressiveModel:
         self._n_locations = None
         self._params = None
         self._validation_loader = None
+        self._locations: list | None = None
+        self._validation_locations: list | None = None
 
     def set_model(self, model: Any) -> None:
         """Override the network instance instead of building one lazily.
@@ -250,6 +286,9 @@ class AutoRegressiveModel:
                 "validation future must include observed disease_cases (they are the "
                 "labels the validation loss is computed against)"
             )
+        if set(historic["location"].unique()) != set(future["location"].unique()):
+            raise ValueError("validation historic and future must cover the same set of locations")
+        self._validation_locations = sorted(historic["location"].unique())
         x, y = get_series(historic)
         x = x[:, -self.context_length :]
         y = y[:, -self.context_length :]
@@ -275,6 +314,7 @@ class AutoRegressiveModel:
             A [`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor] holding the trained
             parameters and the fitted scaler.
         """
+        self._locations = sorted(data["location"].unique())
         data_set = self._get_dataset(data)
         self._transform = ZScaler.from_data(data_set)
         data_set.set_transform(self._transform)
@@ -282,6 +322,11 @@ class AutoRegressiveModel:
         # its features stay on the raw scale and the reported validation loss is
         # not comparable to the training loss.
         if self._validation_loader is not None:
+            if self._validation_locations != self._locations:
+                raise ValueError(
+                    "validation locations must match the training locations "
+                    f"{self._locations}, but got {self._validation_locations}"
+                )
             self._validation_loader.dataset.set_transform(self._transform)
         self._n_locations = data["location"].nunique()
         data_loader = SimpleDataLoader(data_set)
@@ -290,7 +335,14 @@ class AutoRegressiveModel:
         )
         state = trainer.train(data_loader, self._loss)
         self._params = state.params
-        return FlaxPredictor(self._params, self._transform, self.model, self.prediction_length, self.context_length)
+        return FlaxPredictor(
+            self._params,
+            self._transform,
+            self.model,
+            self.prediction_length,
+            self.context_length,
+            locations=self._locations,
+        )
 
     def load_predictor(self, path: str) -> FlaxPredictor:
         """Load a saved predictor, attaching this model's architecture and lengths.
@@ -319,7 +371,7 @@ class AutoRegressiveModel:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        _check_predict_inputs(historic, future, self.prediction_length)
+        _check_predict_inputs(historic, future, self.prediction_length, self._locations)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]

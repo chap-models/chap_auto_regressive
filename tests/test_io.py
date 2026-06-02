@@ -124,6 +124,37 @@ def test_set_validation_data_requires_observed_cases():
         model.set_validation_data(historic, future_no_target)
 
 
+def test_predict_rejects_unseen_locations():
+    # The network learns per-location embeddings by sorted index; predicting on a
+    # location set the model was not trained on would silently reuse another
+    # location's embedding, so it must be rejected.
+    model, predictor, train_df = _small_trained_model()  # trained on A, B
+    unseen_hist = _frame(["C", "D"], [f"2020-{m:02d}" for m in range(1, 13)], seed=9)
+    unseen_future = _frame(["C", "D"], ["2021-01", "2021-02"], with_target=False, seed=10)
+
+    with pytest.raises(ValueError, match="training locations"):
+        predictor.predict(unseen_hist, unseen_future, num_samples=8)
+
+
+def test_saved_predictor_preserves_and_enforces_locations(tmp_path):
+    # The training locations must survive a save/load round-trip so a reloaded
+    # predictor still rejects unseen locations.
+    model, predictor, train_df = _small_trained_model()  # trained on A, B
+    path = str(tmp_path / "model.pkl")
+    predictor.save(path)
+    loaded = model.load_predictor(path)
+
+    assert loaded.locations == ["A", "B"]
+    out = loaded.predict(train_df, _frame(["A", "B"], ["2021-01", "2021-02"], with_target=False, seed=1), num_samples=4)
+    assert set(out["location"]) == {"A", "B"}
+    with pytest.raises(ValueError, match="training locations"):
+        loaded.predict(
+            _frame(["C", "D"], [f"2020-{m:02d}" for m in range(1, 13)], seed=9),
+            _frame(["C", "D"], ["2021-01", "2021-02"], with_target=False, seed=10),
+            num_samples=4,
+        )
+
+
 def test_validation_features_are_scaled_after_train():
     # The fitted scaler must be applied to the validation window too, otherwise
     # the reported validation loss is computed on raw features and is not

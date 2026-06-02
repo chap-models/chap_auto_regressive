@@ -111,12 +111,16 @@ def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         carries no ``disease_cases`` column (i.e. future data).
 
     Raises:
+        ValueError: If the locations do not all share the same number of periods
+            (the dense array is rectangular by construction).
         AssertionError: If any feature value is NaN.
     """
     has_target = "disease_cases" in data.columns
     xs = []
     ys = []
-    for _location, sub in location_groups(data):
+    counts = {}
+    for location, sub in location_groups(data):
+        counts[location] = len(sub)
         year_position = [year_position_from_period(period) for period in sub["time_period"]]
         xs.append(
             np.array(
@@ -130,6 +134,8 @@ def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         )
         if has_target:
             ys.append(sub["disease_cases"].to_numpy())
+    if len(set(counts.values())) > 1:
+        raise ValueError(f"every location must have the same number of periods, but the period counts differ: {counts}")
     x = np.array(xs)
     assert not np.any(np.isnan(x))
     return x, np.array(ys)
