@@ -2,9 +2,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from chap_ar.data_loader import DataSet, SimpleDataLoader
-from chap_ar.rnn_model import model_makers
-from chap_ar.trainer import Trainer
+from chap_auto_regressive.data_loader import DataSet, SimpleDataLoader
+from chap_auto_regressive.rnn_model import model_makers
+from chap_auto_regressive.trainer import Trainer
 
 
 def _toy_loader(n_loc=2, n_periods=12, n_feat=4, seed=0):

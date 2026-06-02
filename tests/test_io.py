@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from chap_ar import AutoRegressiveModel
-from chap_ar.transforms import get_series
+from chap_auto_regressive import AutoRegressiveModel
+from chap_auto_regressive.transforms import get_series
 
 
 def _frame(locations, periods, with_target=True, seed=0):

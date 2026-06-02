@@ -6,34 +6,34 @@ Generated from the source docstrings.
 
 The estimator and the predictor it produces — the main public surface.
 
-::: chap_ar.model.AutoRegressiveModel
+::: chap_auto_regressive.model.AutoRegressiveModel
 
-::: chap_ar.model.FlaxPredictor
+::: chap_auto_regressive.model.FlaxPredictor
 
 ## Network
 
 The recurrent architecture and the factories that build it.
 
-::: chap_ar.rnn_model
+::: chap_auto_regressive.rnn_model
 
 ## Training
 
 The training loop.
 
-::: chap_ar.trainer
+::: chap_auto_regressive.trainer
 
 ## Distributions
 
 The probability distributions and the negative-binomial output head.
 
-::: chap_ar.distributions
+::: chap_auto_regressive.distributions
 
 ## Features and scaling
 
-::: chap_ar.transforms
+::: chap_auto_regressive.transforms
 
 ## Data loading
 
 Windowing of the series into training instances.
 
-::: chap_ar.data_loader
+::: chap_auto_regressive.data_loader

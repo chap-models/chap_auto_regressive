@@ -1,13 +1,13 @@
-# chap_ar
+# chap_auto_regressive
 
-`chap_ar` is the deep **auto-regressive** (RNN) model used by the CHAP
+`chap_auto_regressive` is the deep **auto-regressive** (RNN) model used by the CHAP
 disease-forecasting models `auto_regressive_monthly` and `auto_regressive_weekly`.
 It forecasts disease case counts from a region's own recent history together with
 climate covariates, and returns a full probabilistic forecast (samples), not just
 a point estimate.
 
 ```python
-from chap_ar import AutoRegressiveModel
+from chap_auto_regressive import AutoRegressiveModel
 
 model = AutoRegressiveModel()
 model.context_length = 12      # how many past periods the model reads
@@ -42,7 +42,7 @@ forecasts = predictor.predict(historic_data, future_data)
 
 ## Origin
 
-`chap_ar` is a minimal, modernized fork of
+`chap_auto_regressive` is a minimal, modernized fork of
 [`knutdrand/ch_modelling`](https://github.com/knutdrand/ch_modelling), reduced to
 just the flax auto-regressive model and updated to run on the current
 `jax` / `flax` stack with a plain pandas interface and no chap-core dependency.

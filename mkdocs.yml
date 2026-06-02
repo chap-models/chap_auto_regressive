@@ -1,7 +1,7 @@
-site_name: chap_ar
+site_name: chap_auto_regressive
 site_description: The deep auto-regressive (RNN) flax model for CHAP
-repo_url: https://github.com/mortenoh/chap_ar
-repo_name: mortenoh/chap_ar
+repo_url: https://github.com/mortenoh/chap_auto_regressive
+repo_name: mortenoh/chap_auto_regressive
 
 theme:
   name: material
@@ -76,4 +76,4 @@ extra_css:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mortenoh/chap_ar
+      link: https://github.com/mortenoh/chap_auto_regressive

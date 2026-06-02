@@ -1,6 +1,6 @@
 """The training loop.
 
-[`Trainer`][chap_ar.trainer.Trainer] fits a flax network by minimizing a
+[`Trainer`][chap_auto_regressive.trainer.Trainer] fits a flax network by minimizing a
 caller-supplied loss with the Adam optimizer. The per-step update is JIT-compiled
 with ``jax.jit`` and uses ``jax.value_and_grad`` for the gradient; a small L2
 penalty on the weight matrices is added for regularization.
@@ -90,7 +90,7 @@ class Trainer:
                 log-likelihood under the model's output distribution).
 
         Returns:
-            The final [`TrainState`][chap_ar.trainer.TrainState] holding the
+            The final [`TrainState`][chap_auto_regressive.trainer.TrainState] holding the
             trained parameters.
         """
         ix, iar_y, iy = peekable(iter(data_loader)).peek()

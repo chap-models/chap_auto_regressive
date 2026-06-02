@@ -1,5 +1,5 @@
 [project]
-name = "chap_ar"
+name = "chap_auto_regressive"
 version = "1.0.0"
 description = "Climate-health auto-regressive flax model (minimal, modernized fork)"
 license = { text = "AGPLv3 license" }
@@ -49,7 +49,7 @@ convention = "google"
 "**/__init__.py" = ["D104"]
 # Modules, classes, methods, and functions are documented; __init__ constructors
 # and dunder methods may rely on the class docstring instead.
-"src/chap_ar/**/*.py" = ["D105", "D107"]
+"src/chap_auto_regressive/**/*.py" = ["D105", "D107"]
 "tests/**/*.py" = ["D"]
 
 [tool.ruff.format]
@@ -71,26 +71,26 @@ ignore_missing_imports = true
 # These numerical modules lean on untyped/dynamic library surfaces (chap_core
 # BNPDataClass attributes, jax/flax arrays); distributions.py is checked normally.
 module = [
-    "chap_ar.model",
-    "chap_ar.data_loader",
-    "chap_ar.rnn_model",
-    "chap_ar.trainer",
-    "chap_ar.transforms",
+    "chap_auto_regressive.model",
+    "chap_auto_regressive.data_loader",
+    "chap_auto_regressive.rnn_model",
+    "chap_auto_regressive.trainer",
+    "chap_auto_regressive.transforms",
 ]
 ignore_errors = true
 
 [tool.pyright]
-include = ["src/chap_ar"]
+include = ["src/chap_auto_regressive"]
 # These numerical modules lean on untyped/dynamic library surfaces (chap_core
 # BNPDataClass attributes, jax/flax arrays) that strict type checking can't
 # follow; distributions.py is checked normally.
 exclude = [
     "**/.venv",
-    "src/chap_ar/model.py",
-    "src/chap_ar/data_loader.py",
-    "src/chap_ar/rnn_model.py",
-    "src/chap_ar/trainer.py",
-    "src/chap_ar/transforms.py",
+    "src/chap_auto_regressive/model.py",
+    "src/chap_auto_regressive/data_loader.py",
+    "src/chap_auto_regressive/rnn_model.py",
+    "src/chap_auto_regressive/trainer.py",
+    "src/chap_auto_regressive/transforms.py",
 ]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"

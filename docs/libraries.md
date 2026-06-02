@@ -1,6 +1,6 @@
 # Libraries used
 
-`chap_ar` is deliberately small and leans on a few well-established libraries.
+`chap_auto_regressive` is deliberately small and leans on a few well-established libraries.
 
 ## Modelling stack
 
@@ -16,7 +16,7 @@ NumPy-style array operations with three features the model relies on:
 ### Flax
 
 [Flax](https://flax.readthedocs.io) is the neural-network library on top of JAX.
-`chap_ar` uses Flax's `linen` API to define the network in `rnn_model.py`
+`chap_auto_regressive` uses Flax's `linen` API to define the network in `rnn_model.py`
 (`nn.Embed`, `nn.Dense`, `nn.Dropout`, and the `SimpleCell` RNN), and
 `flax.training.train_state` to hold parameters during training.
 
@@ -34,7 +34,7 @@ negative-binomial sampling/PMF used by the distributions in `distributions.py`.
 
 ## Integration with CHAP
 
-`chap_ar` itself has **no chap-core dependency** — it speaks plain pandas. The CHAP
+`chap_auto_regressive` itself has **no chap-core dependency** — it speaks plain pandas. The CHAP
 platform ([chap-core](https://github.com/dhis2-chap/chap-core)) runs a model purely
 through the `MLproject` CSV contract: it writes the train/historic/future CSVs,
 invokes the model's `train.py` / `predict.py`, and reads the `sample_*` output CSV.

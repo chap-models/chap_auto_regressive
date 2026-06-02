@@ -1,10 +1,10 @@
 """The recurrent network architecture.
 
 The model that the auto-regressive estimator trains is
-[`ARModel2`][chap_ar.rnn_model.ARModel2], assembled by the
-[`model_makers`][chap_ar.rnn_model.model_makers] factories. It processes a window
-in four steps: a per-location [`Preprocess`][chap_ar.rnn_model.Preprocess] stage,
-an auto-regressive join ([`ARAdder`][chap_ar.rnn_model.ARAdder]), and two stacked
+[`ARModel2`][chap_auto_regressive.rnn_model.ARModel2], assembled by the
+[`model_makers`][chap_auto_regressive.rnn_model.model_makers] factories. It processes a window
+in four steps: a per-location [`Preprocess`][chap_auto_regressive.rnn_model.Preprocess] stage,
+an auto-regressive join ([`ARAdder`][chap_auto_regressive.rnn_model.ARAdder]), and two stacked
 ``SimpleCell`` RNNs that encode the context and decode the forecast horizon.
 
 Array convention: ``batch x location x time x feature``.
@@ -95,7 +95,7 @@ class ARAdder(nn.Module):
 class MultiValueARAdder(nn.Module):
     """Auto-regressive join that also mixes targets across locations.
 
-    A variant of [`ARAdder`][chap_ar.rnn_model.ARAdder] that, in addition to each
+    A variant of [`ARAdder`][chap_auto_regressive.rnn_model.ARAdder] that, in addition to each
     series' own past, passes the targets through a dense layer across locations so
     a region can borrow signal from the others.
     """
@@ -179,9 +179,9 @@ model_makers = {
         ar_adder=MultiValueARAdder(),
     ),
 }
-"""Named factories that build a configured [`ARModel2`][chap_ar.rnn_model.ARModel2].
+"""Named factories that build a configured [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2].
 
 ``"base"`` uses the per-location auto-regressive join; ``"multi_value"`` swaps in
-[`MultiValueARAdder`][chap_ar.rnn_model.MultiValueARAdder] to also mix targets
+[`MultiValueARAdder`][chap_auto_regressive.rnn_model.MultiValueARAdder] to also mix targets
 across locations. Each factory takes the number of locations and returns a model.
 """

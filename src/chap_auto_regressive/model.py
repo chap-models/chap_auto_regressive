@@ -1,10 +1,10 @@
 """The public model and its trained predictor.
 
-[`AutoRegressiveModel`][chap_ar.model.AutoRegressiveModel] is the estimator CHAP
+[`AutoRegressiveModel`][chap_auto_regressive.model.AutoRegressiveModel] is the estimator CHAP
 trains; its ``train`` method returns a
-[`FlaxPredictor`][chap_ar.model.FlaxPredictor] that produces probabilistic
+[`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor] that produces probabilistic
 forecasts. Both share the same output head — the network emits two channels per
-period (``eta``) which [`nb_head`][chap_ar.distributions.nb_head] turns into a
+period (``eta``) which [`nb_head`][chap_auto_regressive.distributions.nb_head] turns into a
 negative-binomial distribution that is then sampled.
 
 The public API speaks tidy :class:`pandas.DataFrame` objects (one row per location
@@ -34,7 +34,7 @@ def _forecast_frame(future: pd.DataFrame, samples: Any) -> pd.DataFrame:
         future: The future-covariate frame the forecast was made for.
         samples: Sampled counts with a leading location axis, each entry shaped
             ``(periods, n_samples)`` (aligned with
-            [`location_groups`][chap_ar.transforms.location_groups]).
+            [`location_groups`][chap_auto_regressive.transforms.location_groups]).
 
     Returns:
         A long frame with columns ``time_period``, ``location`` and one
@@ -55,7 +55,7 @@ def _forecast_frame(future: pd.DataFrame, samples: Any) -> pd.DataFrame:
 class FlaxPredictor:
     """A trained model that turns history and future covariates into samples.
 
-    Produced by [`AutoRegressiveModel.train`][chap_ar.model.AutoRegressiveModel.train].
+    Produced by [`AutoRegressiveModel.train`][chap_auto_regressive.model.AutoRegressiveModel.train].
     It holds the fitted network parameters and the feature scaler, and can be
     pickled to disk and reloaded.
 
@@ -147,18 +147,18 @@ class FlaxPredictor:
 class AutoRegressiveModel:
     """Deep auto-regressive forecaster for disease case counts.
 
-    The estimator wraps the [`ARModel2`][chap_ar.rnn_model.ARModel2] network: it
+    The estimator wraps the [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] network: it
     extracts and scales features, slices each location's series into
     ``context_length + prediction_length`` windows, and fits the network by
     maximizing the negative-binomial likelihood of the observed cases. Calling
-    ``train`` returns a [`FlaxPredictor`][chap_ar.model.FlaxPredictor].
+    ``train`` returns a [`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor].
 
     All input/output is via tidy :class:`pandas.DataFrame` objects with the columns
     ``location``, ``time_period``, ``rainfall``, ``mean_temperature``,
     ``population`` and (for training) ``disease_cases``.
 
     Attributes:
-        rnn_model_name: Which [`model_makers`][chap_ar.rnn_model.model_makers]
+        rnn_model_name: Which [`model_makers`][chap_auto_regressive.rnn_model.model_makers]
             architecture to build (``"base"`` or ``"multi_value"``).
         prediction_length: Number of periods to forecast ahead.
         n_iter: Number of training epochs.
@@ -225,7 +225,7 @@ class AutoRegressiveModel:
         """Fit the model and return a predictor.
 
         Extracts features, fits the feature scaler, builds the windowed loader,
-        and runs the [`Trainer`][chap_ar.trainer.Trainer] to minimize the negative
+        and runs the [`Trainer`][chap_auto_regressive.trainer.Trainer] to minimize the negative
         log-likelihood.
 
         Args:
@@ -233,7 +233,7 @@ class AutoRegressiveModel:
                 ``disease_cases``.
 
         Returns:
-            A [`FlaxPredictor`][chap_ar.model.FlaxPredictor] holding the trained
+            A [`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor] holding the trained
             parameters and the fitted scaler.
         """
         data_set = self._get_dataset(data)
@@ -253,10 +253,10 @@ class AutoRegressiveModel:
 
         Args:
             path: Path to a file written by
-                [`FlaxPredictor.save`][chap_ar.model.FlaxPredictor.save].
+                [`FlaxPredictor.save`][chap_auto_regressive.model.FlaxPredictor.save].
 
         Returns:
-            The reconstructed [`FlaxPredictor`][chap_ar.model.FlaxPredictor].
+            The reconstructed [`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor].
         """
         return FlaxPredictor.load(path, self.model, self.prediction_length, self.context_length)
 

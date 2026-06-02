@@ -2,18 +2,18 @@
 
 ## Install
 
-`chap_ar` is managed with [uv](https://docs.astral.sh/uv/) and targets Python 3.13.
+`chap_auto_regressive` is managed with [uv](https://docs.astral.sh/uv/) and targets Python 3.13.
 
 ```bash
 # as a git dependency
-uv add "chap_ar @ git+https://github.com/mortenoh/chap_ar"
+uv add "chap_auto_regressive @ git+https://github.com/mortenoh/chap_auto_regressive"
 ```
 
 Or, working on the library itself:
 
 ```bash
-git clone https://github.com/mortenoh/chap_ar
-cd chap_ar
+git clone https://github.com/mortenoh/chap_auto_regressive
+cd chap_auto_regressive
 make install   # uv sync
 ```
 
@@ -23,7 +23,7 @@ The public surface is a single class, `AutoRegressiveModel`, plus the
 `FlaxPredictor` it produces.
 
 ```python
-from chap_ar import AutoRegressiveModel
+from chap_auto_regressive import AutoRegressiveModel
 
 model = AutoRegressiveModel()
 model.context_length = 12      # past periods read as context
@@ -49,7 +49,7 @@ In the CHAP models these are set in `main.py`. There, `n_iter` is read from the
 `AR_N_ITER` environment variable (defaulting to `1000`) so the test suite can run
 a fast pass — see each model's README.
 
-All input and output is plain [pandas](https://pandas.pydata.org/) — `chap_ar`
+All input and output is plain [pandas](https://pandas.pydata.org/) — `chap_auto_regressive`
 has no dependency on chap-core.
 
 ### Train
@@ -85,14 +85,14 @@ sampled case counts, which is what CHAP uses to build prediction intervals. See
 ## Inside a CHAP model
 
 A CHAP model repository wraps this class in two tiny scripts — `train.py` and
-`predict.py` — that do the CSV I/O with pandas and call `chap_ar`. No chap-core
+`predict.py` — that do the CSV I/O with pandas and call `chap_auto_regressive`. No chap-core
 import is needed; CHAP runs the scripts via the `MLproject` uv runner. A shared
 `model.py` builds the configured estimator:
 
 ```python
 # model.py
 import os
-from chap_ar import AutoRegressiveModel
+from chap_auto_regressive import AutoRegressiveModel
 
 def build_model() -> AutoRegressiveModel:
     model = AutoRegressiveModel()

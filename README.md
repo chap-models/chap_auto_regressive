@@ -1,10 +1,10 @@
-# chap_ar
+# chap_auto_regressive
 
 The deep auto-regressive (RNN) flax model (`AutoRegressiveModel`) used by the
 CHAP `auto_regressive_monthly` and `auto_regressive_weekly` models.
 
 ```python
-from chap_ar import AutoRegressiveModel
+from chap_auto_regressive import AutoRegressiveModel
 ```
 
 It is a minimal, modernized fork of
@@ -18,7 +18,7 @@ on the current stack with no compatibility shims.
 ## Layout
 
 ```
-src/chap_ar/
+src/chap_auto_regressive/
   __init__.py        # exposes AutoRegressiveModel
   model.py           # AutoRegressiveModel + FlaxPredictor
   rnn_model.py       # the RNN architectures (model_makers)

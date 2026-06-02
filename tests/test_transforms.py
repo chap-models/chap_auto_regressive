@@ -1,6 +1,6 @@
 import numpy as np
 
-from chap_ar.transforms import ZScaler, period_start_date, year_position_from_period
+from chap_auto_regressive.transforms import ZScaler, period_start_date, year_position_from_period
 
 
 def test_zscaler_standardizes_first_element():

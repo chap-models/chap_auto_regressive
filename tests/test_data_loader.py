@@ -1,6 +1,6 @@
 import numpy as np
 
-from chap_ar.data_loader import DataSet, SimpleDataLoader, interpolate_nans
+from chap_auto_regressive.data_loader import DataSet, SimpleDataLoader, interpolate_nans
 
 
 def test_interpolate_nans_fills_linearly():

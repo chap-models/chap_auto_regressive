@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import numpy as np
 
-from chap_ar.distributions import NegativeBinomial3, Normal, Poisson, nb_head
+from chap_auto_regressive.distributions import NegativeBinomial3, Normal, Poisson, nb_head
 
 
 def test_negative_binomial3_direct_instantiation():

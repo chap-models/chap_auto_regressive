@@ -100,7 +100,7 @@ negative log-likelihood.
 tells the optimizer which way to step.
 
 **Optimizer / Adam**
-: The algorithm that updates the weights from the gradients. `chap_ar` uses Adam,
+: The algorithm that updates the weights from the gradients. `chap_auto_regressive` uses Adam,
 a widely used adaptive optimizer.
 
 **Epoch**
@@ -127,7 +127,7 @@ the training step.
 
 **chap-core**
 : The CHAP platform that runs the model through the MLproject CSV contract.
-`chap_ar` does not depend on it — they only meet at the CSV files.
+`chap_auto_regressive` does not depend on it — they only meet at the CSV files.
 
 **pandas**
-: The library for the tidy DataFrames `chap_ar` takes and returns.
+: The library for the tidy DataFrames `chap_auto_regressive` takes and returns.

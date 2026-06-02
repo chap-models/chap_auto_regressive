@@ -1,7 +1,7 @@
 # Concepts
 
 This page explains what regression and auto-regression are, why they fit disease
-forecasting, and exactly how `chap_ar` implements them.
+forecasting, and exactly how `chap_auto_regressive` implements them.
 
 ## Regression
 
@@ -33,14 +33,14 @@ strongly serially correlated: an outbreak this month makes more cases next month
 likely, regardless of climate. A model that ignores recent cases throws that
 signal away.
 
-`chap_ar` is auto-regressive in exactly this sense: when forecasting, it feeds the
+`chap_auto_regressive` is auto-regressive in exactly this sense: when forecasting, it feeds the
 recently observed case counts back into the network alongside the climate
 covariates.
 
 ## Why a *deep* auto-regressive model
 
 A classical auto-regressive model (e.g. ARIMA) assumes a fixed, linear
-relationship to a few lagged values. `chap_ar` instead uses a small **recurrent
+relationship to a few lagged values. `chap_auto_regressive` instead uses a small **recurrent
 neural network (RNN)**, which:
 
 - learns a non-linear function of the history rather than fixed lag coefficients;
@@ -49,7 +49,7 @@ neural network (RNN)**, which:
 - shares one set of weights across all locations, while still letting each
   location differ through a learned **embedding**.
 
-## How chap_ar handles it, step by step
+## How chap_auto_regressive handles it, step by step
 
 ### 1. Inputs and target
 
@@ -118,7 +118,7 @@ box corresponds to one of the five stages listed above.
 ### 4. From network output to a distribution
 
 Counts are non-negative integers and are typically **overdispersed** (variance
-larger than the mean), so a Poisson is too rigid. `chap_ar` uses a **negative
+larger than the mean), so a Poisson is too rigid. `chap_auto_regressive` uses a **negative
 binomial** instead. The two network outputs are mapped to its parameters by
 `distributions.nb_head`:
 
@@ -213,7 +213,7 @@ into a point estimate and an interval.
 
 ## In one sentence
 
-`chap_ar` rolls each region's recent case history and climate into an RNN state,
+`chap_auto_regressive` rolls each region's recent case history and climate into an RNN state,
 continues that state across the forecast horizon, and reads out a negative
 binomial distribution of future cases at each step — auto-regression, done with a
 small neural network and a count-appropriate likelihood.

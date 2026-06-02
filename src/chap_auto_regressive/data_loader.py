@@ -2,7 +2,7 @@
 
 The model is trained on fixed-length windows of ``context_length + forecast_length``
 periods sliced out of each location's series. The classes here turn the dense
-``(features, target)`` arrays from [`transforms`][chap_ar.transforms] into those
+``(features, target)`` arrays from [`transforms`][chap_auto_regressive.transforms] into those
 windows and iterate over them.
 
 Each window yields three arrays:
@@ -57,9 +57,9 @@ class DataSet:
     """A windowed view over one set of location series.
 
     Indexing returns a single training window; iterating a
-    [`SimpleDataLoader`][chap_ar.data_loader.SimpleDataLoader] over the dataset
+    [`SimpleDataLoader`][chap_auto_regressive.data_loader.SimpleDataLoader] over the dataset
     walks every window. A feature transform (typically a
-    [`ZScaler`][chap_ar.transforms.ZScaler]) can be attached and is applied lazily
+    [`ZScaler`][chap_auto_regressive.transforms.ZScaler]) can be attached and is applied lazily
     as windows are produced.
     """
 
@@ -86,7 +86,7 @@ class DataSet:
 
         Args:
             transform: A callable mapping a ``(features, ar_target)`` tuple to a
-                transformed tuple, e.g. a [`ZScaler`][chap_ar.transforms.ZScaler].
+                transformed tuple, e.g. a [`ZScaler`][chap_auto_regressive.transforms.ZScaler].
         """
         self._transform = transform
 
@@ -137,7 +137,7 @@ class DataSet:
 
 
 class SimpleDataLoader:
-    """Iterates over every window of a [`DataSet`][chap_ar.data_loader.DataSet] in order."""
+    """Iterates over every window of a [`DataSet`][chap_auto_regressive.data_loader.DataSet] in order."""
 
     def __init__(self, dataset: DataSet):
         """Wrap a dataset for iteration.
@@ -156,7 +156,7 @@ class SimpleDataLoader:
 class DataLoader:
     """Iterates over windows with an optional held-out validation block.
 
-    Unlike [`SimpleDataLoader`][chap_ar.data_loader.SimpleDataLoader], this loader
+    Unlike [`SimpleDataLoader`][chap_auto_regressive.data_loader.SimpleDataLoader], this loader
     can carve a contiguous validation region out of the middle of the series and
     mask the overlapping windows out of training, so the same series provides both
     training and validation windows.
