@@ -84,14 +84,27 @@ def test_predict_is_insensitive_to_future_location_row_order():
     assert np.isfinite(out[[c for c in out.columns if c.startswith("sample_")]].to_numpy()).all()
 
 
-def test_predict_rejects_wrong_future_length():
-    # The model forecasts a fixed horizon (prediction_length); a future frame with
-    # a different number of periods must fail loudly rather than silently misalign.
-    model, predictor, train_df = _small_trained_model()
+def test_predict_rejects_future_longer_than_horizon():
+    # The model can forecast at most prediction_length periods (its trained
+    # horizon); asking for more must fail loudly rather than extrapolate silently.
+    model, predictor, train_df = _small_trained_model()  # prediction_length = 2
     too_many = _frame(["A", "B"], ["2021-01", "2021-02", "2021-03"], with_target=False, seed=1)
 
     with pytest.raises(ValueError, match="prediction_length"):
         predictor.predict(train_df, too_many, num_samples=8)
+
+
+def test_predict_accepts_future_shorter_than_horizon():
+    # A chap eval backtest forecasts fewer periods than prediction_length; a short
+    # future must be accepted and produce one row per location and period.
+    model, predictor, train_df = _small_trained_model()  # prediction_length = 2
+    short_future = _frame(["A", "B"], ["2021-01"], with_target=False, seed=1)
+
+    out = predictor.predict(train_df, short_future, num_samples=8)
+
+    assert len(out) == 2  # 2 locations x 1 period
+    assert sorted(out["time_period"].unique()) == ["2021-01"]
+    assert np.isfinite(out[[c for c in out.columns if c.startswith("sample_")]].to_numpy()).all()
 
 
 def test_predict_labels_each_location_with_its_own_periods():

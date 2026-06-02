@@ -46,8 +46,9 @@ def _check_predict_inputs(
 
     Raises:
         ValueError: If the two frames cover different location sets, if any
-            location's future does not have exactly ``prediction_length`` periods,
-            or if the locations differ from ``training_locations``.
+            location asks for more than ``prediction_length`` future periods (the
+            model's trained horizon), or if the locations differ from
+            ``training_locations``.
     """
     historic_locations = set(historic["location"].unique())
     if historic_locations != set(future["location"].unique()):
@@ -57,11 +58,14 @@ def _check_predict_inputs(
             "prediction locations must match the training locations "
             f"{sorted(training_locations)}, but got {sorted(historic_locations)}"
         )
+    # The model forecasts up to its trained horizon; callers (e.g. a chap eval
+    # backtest) may request fewer periods, but more than prediction_length would
+    # extrapolate beyond what the network was trained for.
     counts = future.groupby("location").size()
-    if not (counts == prediction_length).all():
+    if (counts > prediction_length).any():
         raise ValueError(
-            f"future must contain exactly prediction_length={prediction_length} periods per "
-            f"location, got period counts {sorted(set(counts.tolist()))}"
+            f"each location's future must have at most prediction_length={prediction_length} "
+            f"periods, got period counts {sorted(set(counts.tolist()))}"
         )
 
 
