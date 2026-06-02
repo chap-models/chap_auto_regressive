@@ -31,6 +31,7 @@ def _check_predict_inputs(
     historic: pd.DataFrame,
     future: pd.DataFrame,
     prediction_length: int,
+    context_length: int,
     training_locations: list | None = None,
 ) -> None:
     """Validate the history/future frames before forecasting.
@@ -39,16 +40,18 @@ def _check_predict_inputs(
         historic: Recent history including observed cases.
         future: The periods to forecast, with covariates but no cases.
         prediction_length: The fixed forecast horizon the model was built for.
+        context_length: Number of past periods the model reads as context; each
+            location's history must provide at least this many.
         training_locations: The canonical (sorted) locations the model was trained
             on. When provided, the frames must cover exactly this set — the model
             learns per-location embeddings by sorted index, so an unseen location
             would silently borrow another location's embedding.
 
     Raises:
-        ValueError: If the two frames cover different location sets, if any
-            location asks for more than ``prediction_length`` future periods (the
-            model's trained horizon), or if the locations differ from
-            ``training_locations``.
+        ValueError: If the two frames cover different location sets, if the
+            locations differ from ``training_locations``, if any location provides
+            fewer than ``context_length`` history periods, or if any location asks
+            for more than ``prediction_length`` future periods.
     """
     historic_locations = set(historic["location"].unique())
     if historic_locations != set(future["location"].unique()):
@@ -57,6 +60,12 @@ def _check_predict_inputs(
         raise ValueError(
             "prediction locations must match the training locations "
             f"{sorted(training_locations)}, but got {sorted(historic_locations)}"
+        )
+    historic_counts = historic.groupby("location").size()
+    if (historic_counts < context_length).any():
+        raise ValueError(
+            f"each location's history must have at least context_length={context_length} periods, "
+            f"got period counts {sorted(set(historic_counts.tolist()))}"
         )
     # The model forecasts up to its trained horizon; callers (e.g. a chap eval
     # backtest) may request fewer periods, but more than prediction_length would
@@ -159,7 +168,7 @@ class FlaxPredictor:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        _check_predict_inputs(historic, future, self.prediction_length, self.locations)
+        _check_predict_inputs(historic, future, self.prediction_length, self.context_length, self.locations)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]
@@ -375,7 +384,7 @@ class AutoRegressiveModel:
             A frame with columns ``time_period``, ``location`` and one ``sample_i``
             column per draw.
         """
-        _check_predict_inputs(historic, future, self.prediction_length, self._locations)
+        _check_predict_inputs(historic, future, self.prediction_length, self.context_length, self._locations)
         x, _ = get_series(future)
         prev_values, prev_y = get_series(historic)
         prev_values = prev_values[:, -self.context_length :]

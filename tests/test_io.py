@@ -94,6 +94,17 @@ def test_predict_rejects_future_longer_than_horizon():
         predictor.predict(train_df, too_many, num_samples=8)
 
 
+def test_predict_rejects_history_shorter_than_context():
+    # The model reads context_length periods of history; a shorter history would
+    # silently build a truncated window, so it must be rejected with a clear error.
+    model, predictor, train_df = _small_trained_model()  # context_length = 4
+    short_history = _frame(["A", "B"], ["2020-11", "2020-12"])  # only 2 periods
+    future = _frame(["A", "B"], ["2021-01", "2021-02"], with_target=False, seed=1)
+
+    with pytest.raises(ValueError, match="context_length"):
+        predictor.predict(short_history, future, num_samples=8)
+
+
 def test_predict_accepts_future_shorter_than_horizon():
     # A chap eval backtest forecasts fewer periods than prediction_length; a short
     # future must be accepted and produce one row per location and period.

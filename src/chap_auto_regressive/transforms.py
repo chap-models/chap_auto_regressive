@@ -18,8 +18,6 @@ from typing import Any, Iterator
 import numpy as np
 import pandas as pd
 
-FEATURE_COLUMNS = ("rainfall", "mean_temperature", "population")
-
 
 @dataclass
 class ZScaler:
@@ -112,8 +110,8 @@ def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
     Raises:
         ValueError: If the locations do not all share the same number of periods
-            (the dense array is rectangular by construction).
-        AssertionError: If any feature value is NaN.
+            (the dense array is rectangular by construction), or if any feature
+            value is NaN.
     """
     has_target = "disease_cases" in data.columns
     xs = []
@@ -137,7 +135,8 @@ def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     if len(set(counts.values())) > 1:
         raise ValueError(f"every location must have the same number of periods, but the period counts differ: {counts}")
     x = np.array(xs)
-    assert not np.any(np.isnan(x))
+    if np.any(np.isnan(x)):
+        raise ValueError("input features contain NaN values (rainfall, mean_temperature or population)")
     return x, np.array(ys)
 
 
