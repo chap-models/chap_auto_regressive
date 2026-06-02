@@ -2,6 +2,7 @@
 name = "chap_ar"
 version = "1.0.0"
 description = "Climate-health auto-regressive flax model (minimal, modernized fork)"
+license = { text = "AGPLv3 license" }
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "flax>=0.10.2",
