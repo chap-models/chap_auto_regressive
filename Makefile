@@ -21,7 +21,7 @@ lint:
 	@$(UV) run ruff format .
 	@$(UV) run ruff check . --fix
 	@echo ">>> Type checking"
-	@$(UV) run mypy chap_ar
+	@$(UV) run mypy src/chap_ar
 	@$(UV) run pyright
 
 check:
@@ -29,7 +29,7 @@ check:
 	@$(UV) run ruff format --check .
 	@$(UV) run ruff check .
 	@echo ">>> Type checking"
-	@$(UV) run mypy chap_ar
+	@$(UV) run mypy src/chap_ar
 	@$(UV) run pyright
 
 test:

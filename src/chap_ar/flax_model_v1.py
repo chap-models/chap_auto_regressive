@@ -40,8 +40,7 @@ class FlaxPredictor:
         dataset = DLDataSet(full_x, prev_y, forecast_length=self.prediction_length, context_length=self.context_length)
         dataset.set_transform(self._transform)
         x, y = dataset.prediction_instance()
-        # full_x, iy = self._transform((full_x, interpolate_nans(prev_y)))
-        eta = self.model.apply(self._params, x, y)  # full_x, iy)
+        eta = self.model.apply(self._params, x, y)
         n_prev = prev_values.shape[1]
         samples = self.get_samples(eta[:, n_prev - 1 :], num_samples)
         time_period = next(iter(future_data.values())).time_period
@@ -118,8 +117,7 @@ class ARModelTV1(ProbabilisticFlaxModel):
         dataset = DLDataSet(full_x, prev_y, forecast_length=self.prediction_length, context_length=self.context_length)
         dataset.set_transform(self._transform)
         x, y = dataset.prediction_instance()
-        # full_x, iy = self._transform((full_x, interpolate_nans(prev_y)))
-        eta = self.model.apply(self._params, x, y)  # full_x, iy)
+        eta = self.model.apply(self._params, x, y)
         n_prev = prev_values.shape[1]
         samples = self.get_samples(eta[:, n_prev - 1 :], num_samples)
         time_period = next(iter(future_data.values())).time_period
@@ -137,4 +135,3 @@ class ARModelTV1(ProbabilisticFlaxModel):
     def get_samples(self, eta, n_samples):
         self.rng_key, sample_key = jax.random.split(self.rng_key)
         return self.distribution_head(eta).sample(sample_key, (n_samples,))
-        # return self._get_dist(eta).sample(eta, (n_samples,))

@@ -17,11 +17,6 @@ def l2_regularization(params, scale=1.0):
     return sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params) if p.ndim == 2) * scale
 
 
-# DataLoader = Iterable[Tuple[jnp.ndarray,
-#                            jnp.ndarray,
-#                            jnp.ndarray]]
-
-
 class Trainer:
     def __init__(self, model, n_iter=3000, learning_rate=1e-5, validation_loader: Optional[DataLoader] = None):
         self.model = model
@@ -37,8 +32,6 @@ class Trainer:
         training_state = TrainState.create(
             apply_fn=self.model.apply, params=params, tx=optax.adam(self.learning_rate), key=dropout_key
         )
-        # if data_loader.do_validation:
-        #    v_x, v_ar, v_y = data_loader.validation_set()
 
         @jax.jit
         def train_step(state: TrainState, dropout_key, x, ar_y, y) -> Tuple[TrainState, jnp.ndarray]:
@@ -60,7 +53,6 @@ class Trainer:
         for i in range(self.n_iter):
             total_loss = 0
             for x, ar_y, y in iter(data_loader):
-                # print(x.shape, ar_y.shape, y.shape)
                 training_state, cur_loss = train_step(training_state, dropout_key, x, ar_y, y)
                 total_loss += cur_loss
             if i % 10 == 0:
@@ -70,8 +62,6 @@ class Trainer:
                     for v_x, v_ar, v_y in iter(self._validation_loader):
                         v_loss += get_validation_loss(training_state, v_x, v_ar, v_y)
                     validation_loss = v_loss
-                    # validation_loss = loss_fn(training_state.apply_fn(training_state.params, v_x, v_ar, training=False),
-                    # v_y)
                 print(f"Loss: {cur_loss}, Validation Loss: {validation_loss}")
 
         return training_state

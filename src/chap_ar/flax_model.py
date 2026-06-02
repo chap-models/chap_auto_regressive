@@ -10,8 +10,7 @@ from flax import linen as nn
 from flax.training import train_state
 from matplotlib import pyplot as plt
 
-from ...registry import register_model
-from .distributions import NegativeBinomial2, NegativeBinomial3, Normal, Poisson, skip_nan_distribution
+from .distributions import NegativeBinomial3, Normal, Poisson, skip_nan_distribution
 from .rnn_model import RNNModel
 from .transforms import year_position_from_datetime
 
@@ -110,8 +109,7 @@ class FlaxModel:
         self._std = np.std(x, axis=(0, 1))
         x = (x - self._mu) / self._std
         self._saved_x = x
-        params = self.init_params(x, y)  # self.model.init(self.rng_key, x, training=False)
-        # y_pred = self.model.apply(params, x)
+        params = self.init_params(x, y)
 
         dropout_key = jax.random.PRNGKey(40)
 
@@ -123,7 +121,6 @@ class FlaxModel:
 
             def loss_func(params):
                 eta = self._state_apply(state, params, x, y, dropout_train_key, training=True)
-                # eta = state.apply_fn(params, x, training=True, rngs={'dropout': dropout_train_key})
                 return self._loss(eta, y) + l2_regularization(params, 0.001)
 
             grad_func = jax.value_and_grad(loss_func)
@@ -135,16 +132,13 @@ class FlaxModel:
             state = train_step(state, dropout_key)
             if i % 1000 == 0:
                 eta = self._state_apply(state, state.params, x, y, training=False)
-                # eta = state.apply_fn(state.params, x, training=False)
                 loss = self._loss(eta, y)
                 print(f"Loss: {loss}")
                 if self._validation_x is not None:
                     validation_y = self.get_validation_y(state.params)
-                    # print(validation_y)
                     val_loss = self._loss(validation_y, self._validation_y)
                     print(f"Validation Loss: {val_loss}")
                     eta = self._state_apply(state, state.params, x, y, training=False)
-                    # eta = state.apply_fn(state.params, x, training=False)
                     mean = self._get_mean(eta)
                     j = 0
                     for series, true in zip(mean, y):
@@ -155,9 +149,6 @@ class FlaxModel:
                         if j > 10:
                             break
                     print(f"Loss: {self._loss(eta, y)}")
-
-                # self._losses.append(loss)
-            # self._losses.append(loss)
 
         self._params = state.params
         return self
@@ -194,7 +185,6 @@ NormalSkipNaN = skip_nan_distribution(Normal)
 NBSkipNaN = skip_nan_distribution(NegativeBinomial3)
 
 
-@register_model
 class ProbabilisticFlaxModel(FlaxModel):
     n_iter: int = 32000
 
@@ -213,20 +203,9 @@ class ProbabilisticFlaxModel(FlaxModel):
 
     def _get_mean(self, eta):
         return self._get_dist(eta).mean
-        # return jnp.exp(eta[..., 0])
-        # return jax.nn.softplus(eta[..., 0])
-        # mu = eta[..., 0]
-        # return mu
 
     def _get_q(self, eta, q=0.95):
         return self._get_dist(eta).icdf(q)
-        mu = self._get_mean(eta)
-        alpha = jax.nn.softplus(eta[..., 1])
-        dist = NegativeBinomial2(mu, alpha)
-        p, n = dist.p(), dist.n()
-        return scipy.stats.nbinom.ppf(q, n, p)
 
     def loss_func(self, eta_pred, y_true):
         return -self._get_dist(eta_pred).log_prob(y_true).ravel()
-        # alpha = jax.nn.softplus(eta_pred[..., 1].ravel())
-        # return -NBSkipNaN(self._get_mean(eta_pred).ravel(), alpha).log_prob(y_true.ravel())+l2_regularization(params, 10)
