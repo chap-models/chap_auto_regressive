@@ -6,6 +6,7 @@ with ``jax.jit`` and uses ``jax.value_and_grad`` for the gradient; a small L2
 penalty on the weight matrices is added for regularization.
 """
 
+import logging
 from typing import Any, Callable, Optional, Tuple
 
 import jax
@@ -15,6 +16,8 @@ from flax.training import train_state
 from more_itertools import peekable
 
 from .data_loader import DataLoader
+
+logger = logging.getLogger(__name__)
 
 
 class TrainState(train_state.TrainState):
@@ -127,6 +130,6 @@ class Trainer:
                     for v_x, v_ar, v_y in iter(self._validation_loader):
                         v_loss += get_validation_loss(training_state, v_x, v_ar, v_y)
                     validation_loss = v_loss
-                print(f"Loss: {cur_loss}, Validation Loss: {validation_loss}")
+                logger.info("epoch %d: loss=%s validation_loss=%s", i, cur_loss, validation_loss)
 
         return training_state

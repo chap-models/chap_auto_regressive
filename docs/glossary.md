@@ -126,5 +126,8 @@ the training step.
 : The optimizer library that provides Adam.
 
 **chap-core**
-: The CHAP platform library; provides the data types and the CLI adaptor the model
-plugs into.
+: The CHAP platform that runs the model through the MLproject CSV contract.
+`chap_ar` does not depend on it — they only meet at the CSV files.
+
+**pandas**
+: The library for the tidy DataFrames `chap_ar` takes and returns.

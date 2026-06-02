@@ -49,55 +49,79 @@ In the CHAP models these are set in `main.py`. There, `n_iter` is read from the
 `AR_N_ITER` environment variable (defaulting to `1000`) so the test suite can run
 a fast pass — see each model's README.
 
+All input and output is plain [pandas](https://pandas.pydata.org/) — `chap_ar`
+has no dependency on chap-core.
+
 ### Train
 
-`train` takes a `chap_core` `DataSet` of `FullData` (per-location time series with
-`rainfall`, `mean_temperature`, `population`, and `disease_cases`) and returns a
-`FlaxPredictor`:
+`train` takes a tidy `DataFrame` with one row per location and time period and the
+columns `location`, `time_period`, `rainfall`, `mean_temperature`, `population`,
+and `disease_cases`. It returns a `FlaxPredictor`:
 
 ```python
-predictor = model.train(training_data)
+import pandas as pd
+
+predictor = model.train(pd.read_csv("training_data.csv"))
 predictor.save("model.bin")     # pickles the trained parameters + scaler
 ```
 
 ### Predict
 
 `predict` takes the history (with observed cases) and the future covariates
-(climate for the periods to forecast) and returns a `DataSet` of `Samples` — by
-default 100 sampled trajectories per location:
+(climate for the periods to forecast, no `disease_cases`) and returns a
+`DataFrame` with columns `time_period`, `location`, and one `sample_i` column per
+draw (100 by default):
 
 ```python
 predictor = model.load_predictor("model.bin")
-forecasts = predictor.predict(historic_data, future_data, num_samples=100)
+forecasts = predictor.predict(historic_df, future_df, num_samples=100)
+# columns: time_period, location, sample_0 … sample_99
 ```
 
-The output is **probabilistic**: each location/horizon gets a distribution of
-sampled case counts, which is what CHAP uses to build prediction intervals.
+The output is **probabilistic**: each location/period gets a distribution of
+sampled case counts, which is what CHAP uses to build prediction intervals. See
+[Data format](data.md) for the full CSV contract.
 
 ## Inside a CHAP model
 
-In a CHAP model repository this class is wrapped with `chap_core`'s CLI adaptor,
-which turns it into the `train` / `predict` commands CHAP calls. A complete
-`main.py` is just:
+A CHAP model repository wraps this class in two tiny scripts — `train.py` and
+`predict.py` — that do the CSV I/O with pandas and call `chap_ar`. No chap-core
+import is needed; CHAP runs the scripts via the `MLproject` uv runner. A shared
+`model.py` builds the configured estimator:
 
 ```python
+# model.py
 import os
-from chap_core.adaptors.command_line_interface import generate_app
 from chap_ar import AutoRegressiveModel
 
-model = AutoRegressiveModel()
-model.n_iter = int(os.environ.get("AR_N_ITER", "1000"))
-model.context_length = 12
-model.prediction_length = 3
-model.learning_rate = 1e-5
-
-app = generate_app(model)
-app()
+def build_model() -> AutoRegressiveModel:
+    model = AutoRegressiveModel()
+    model.n_iter = int(os.environ.get("AR_N_ITER", "1000"))
+    model.context_length = 12
+    model.prediction_length = 3
+    model.learning_rate = 1e-5
+    return model
 ```
 
-The model repo's `MLproject` points CHAP at that `main.py` via the uv runner. See
-`auto_regressive_monthly` and `auto_regressive_weekly` for the full setup, which
-differ only in the period type and the context/horizon lengths:
+```python
+# train.py — invoked as: python train.py {train_data} {model}
+import sys, pandas as pd
+from model import build_model
+
+build_model().train(pd.read_csv(sys.argv[1])).save(sys.argv[2])
+```
+
+```python
+# predict.py — invoked as: python predict.py {model} {historic} {future} {out}
+import sys, pandas as pd
+from model import build_model
+
+predictor = build_model().load_predictor(sys.argv[1])
+predictor.predict(pd.read_csv(sys.argv[2]), pd.read_csv(sys.argv[3])).to_csv(sys.argv[4], index=False)
+```
+
+See `auto_regressive_monthly` and `auto_regressive_weekly` for the full setup,
+which differ only in the period type and the context/horizon lengths:
 
 | Model | period | context_length | prediction_length |
 | --- | --- | --- | --- |

@@ -25,21 +25,21 @@ NumPy-style array operations with three features the model relies on:
 [Optax](https://optax.readthedocs.io) supplies the optimizer. The trainer uses
 `optax.adam` to update the network weights from the gradients JAX computes.
 
-### SciPy and NumPy
+### pandas, SciPy and NumPy
 
-[NumPy](https://numpy.org) handles feature assembly and scaling
-(`transforms.py`), and [SciPy](https://scipy.org) provides the negative-binomial
-sampling/PMF used by the distributions in `distributions.py`.
+[pandas](https://pandas.pydata.org/) is the public I/O type — `train`/`predict`
+take and return DataFrames. [NumPy](https://numpy.org) handles feature assembly
+and scaling (`transforms.py`), and [SciPy](https://scipy.org) provides the
+negative-binomial sampling/PMF used by the distributions in `distributions.py`.
 
-## Integration
+## Integration with CHAP
 
-### chap-core
-
-[chap-core](https://github.com/dhis2-chap/chap-core) is the CHAP platform. `chap_ar`
-depends on it for its data types — `FullData`, `Samples`, and the
-`DataSet` container — so the model speaks CHAP's data format directly. In the
-model repositories, `chap_core.adaptors.command_line_interface.generate_app` also
-wraps the model as the `train` / `predict` CLI that CHAP invokes.
+`chap_ar` itself has **no chap-core dependency** — it speaks plain pandas. The CHAP
+platform ([chap-core](https://github.com/dhis2-chap/chap-core)) runs a model purely
+through the `MLproject` CSV contract: it writes the train/historic/future CSVs,
+invokes the model's `train.py` / `predict.py`, and reads the `sample_*` output CSV.
+What happens inside the model is invisible to it, which is what lets the model drop
+the chap-core dependency entirely.
 
 ## Tooling
 

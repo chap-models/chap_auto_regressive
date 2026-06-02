@@ -1,20 +1,24 @@
 """Feature extraction and scaling.
 
-Two concerns live here:
+The model consumes a single tidy :class:`pandas.DataFrame` with one row per
+location and time period and the columns ``location``, ``time_period``,
+``rainfall``, ``mean_temperature``, ``population`` and (for training) the target
+``disease_cases``.
 
-- [`get_series`][chap_ar.transforms.get_series] turns a CHAP ``DataSet`` into the
-  dense ``(features, target)`` arrays the network consumes.
+- [`get_series`][chap_ar.transforms.get_series] turns that frame into the dense
+  ``(features, target)`` arrays the network consumes.
 - [`ZScaler`][chap_ar.transforms.ZScaler] standardizes those features so that no
   single covariate dominates training.
 """
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterator
 
 import numpy as np
-from chap_core.datatypes import FullData
-from chap_core.spatio_temporal_data.temporal_dataclass import DataSet
+import pandas as pd
+
+FEATURE_COLUMNS = ("rainfall", "mean_temperature", "population")
 
 
 @dataclass
@@ -63,47 +67,90 @@ class ZScaler:
         return ZScaler(np.mean(data_set.predictors(0), axis=(0, 1)), np.std(data_set.predictors(0), axis=(0, 1)))
 
 
-def get_series(data: DataSet[FullData]) -> tuple[np.ndarray, np.ndarray]:
-    """Extract dense feature and target arrays from a CHAP dataset.
+def location_groups(data: pd.DataFrame) -> Iterator[tuple[Any, pd.DataFrame]]:
+    """Yield each location's rows, sorted by time period.
+
+    Locations are yielded in first-seen order; within each location the rows are
+    sorted by ``time_period`` (lexicographic order is chronological for both the
+    monthly ``YYYY-MM`` and the weekly ``start/end`` formats).
+
+    Args:
+        data: The input frame with a ``location`` and ``time_period`` column.
+
+    Yields:
+        ``(location, sub_frame)`` pairs.
+    """
+    for location, sub in data.groupby("location", sort=False):
+        yield location, sub.sort_values("time_period")
+
+
+def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Extract dense feature and target arrays from the input frame.
 
     For every location the function stacks four features per period — rainfall,
     mean temperature, population, and the day-of-year position — into a
     ``(periods, features)`` matrix, and collects the observed ``disease_cases``
-    as the target when present.
+    as the target when the column is present.
 
     Args:
-        data: A CHAP ``DataSet`` of ``FullData`` series, one per location.
+        data: A tidy frame with one row per location and time period.
 
     Returns:
         A ``(x, y)`` tuple where ``x`` has shape ``(locations, periods, 4)`` and
-        ``y`` has shape ``(locations, periods)``. ``y`` is empty when the input
-        carries no ``disease_cases`` (i.e. future data).
+        ``y`` has shape ``(locations, periods)``. ``y`` is empty when the frame
+        carries no ``disease_cases`` column (i.e. future data).
 
     Raises:
         AssertionError: If any feature value is NaN.
     """
-    x = []
-    y = []
-    for series in data.values():
-        year_position = [year_position_from_datetime(period.start_timestamp.date) for period in series.time_period]
-        x.append(np.array((series.rainfall, series.mean_temperature, series.population, year_position)).T)  # type: ignore
-        if hasattr(series, "disease_cases"):
-            y.append(series.disease_cases)
+    has_target = "disease_cases" in data.columns
+    xs = []
+    ys = []
+    for _location, sub in location_groups(data):
+        year_position = [year_position_from_period(period) for period in sub["time_period"]]
+        xs.append(
+            np.array(
+                (
+                    sub["rainfall"].to_numpy(),
+                    sub["mean_temperature"].to_numpy(),
+                    sub["population"].to_numpy(),
+                    year_position,
+                )
+            ).T
+        )
+        if has_target:
+            ys.append(sub["disease_cases"].to_numpy())
+    x = np.array(xs)
     assert not np.any(np.isnan(x))
-    return np.array(x), np.array(y)
+    return x, np.array(ys)
 
 
-def year_position_from_datetime(dt: datetime) -> float:
-    """Return the within-year position of a date as a fraction in ``[0, 1]``.
-
-    This gives the network a simple, continuous seasonal signal: 1 January is
-    near 0 and 31 December is near 1.
+def period_start_date(period: str) -> datetime:
+    """Return the start date of a CHAP time-period string.
 
     Args:
-        dt: The date to convert.
+        period: A monthly period (``"YYYY-MM"``) or a weekly range
+            (``"YYYY-MM-DD/YYYY-MM-DD"``).
 
     Returns:
-        The day of the year divided by 365.
+        The first day of the period as a ``datetime``.
     """
-    day = dt.timetuple().tm_yday
-    return day / 365
+    text = str(period)
+    if "/" in text:
+        return datetime.fromisoformat(text.split("/")[0])
+    return pd.Period(text).start_time.to_pydatetime()
+
+
+def year_position_from_period(period: str) -> float:
+    """Return the within-year position of a period start as a fraction in ``[0, 1]``.
+
+    This gives the network a simple, continuous seasonal signal: January is near 0
+    and December is near 1.
+
+    Args:
+        period: A CHAP time-period string.
+
+    Returns:
+        The day of the year of the period's start divided by 365.
+    """
+    return period_start_date(period).timetuple().tm_yday / 365

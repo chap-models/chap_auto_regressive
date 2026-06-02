@@ -28,7 +28,7 @@ forecasts = predictor.predict(historic_data, future_data)
 | Horizon | `prediction_length` future periods |
 | Architecture | Location embedding → MLP → two RNN (SimpleCell) stages |
 | Output | Negative-binomial distribution per period (probabilistic) |
-| Stack | Python 3.13, `jax` + `flax` + `optax`, on top of `chap-core` |
+| Stack | Python 3.13, `jax` + `flax` + `optax`, `pandas` I/O (no chap-core) |
 
 ## Where to go next
 
@@ -45,4 +45,4 @@ forecasts = predictor.predict(historic_data, future_data)
 `chap_ar` is a minimal, modernized fork of
 [`knutdrand/ch_modelling`](https://github.com/knutdrand/ch_modelling), reduced to
 just the flax auto-regressive model and updated to run on the current
-`jax` / `flax` / `chap-core` stack with no compatibility shims.
+`jax` / `flax` stack with a plain pandas interface and no chap-core dependency.
