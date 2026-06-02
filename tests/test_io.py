@@ -92,3 +92,50 @@ def test_predict_rejects_wrong_future_length():
 
     with pytest.raises(ValueError, match="prediction_length"):
         predictor.predict(train_df, too_many, num_samples=8)
+
+
+def test_predict_labels_each_location_with_its_own_periods():
+    # Each location must be labeled with its own forecast periods, not the first
+    # location's (the output used to copy group-0's time_period onto every group).
+    model, predictor, train_df = _small_trained_model()
+    future = pd.concat(
+        [
+            _frame(["A"], ["2021-01", "2021-02"], with_target=False, seed=1),
+            _frame(["B"], ["2021-03", "2021-04"], with_target=False, seed=2),
+        ],
+        ignore_index=True,
+    )
+
+    out = predictor.predict(train_df, future, num_samples=6)
+
+    assert sorted(out[out["location"] == "A"]["time_period"]) == ["2021-01", "2021-02"]
+    assert sorted(out[out["location"] == "B"]["time_period"]) == ["2021-03", "2021-04"]
+
+
+def test_set_validation_data_requires_observed_cases():
+    # Validation loss is computed against observed cases, so a future without a
+    # disease_cases column must fail with a clear message (not a cryptic concat).
+    model = AutoRegressiveModel()
+    model.context_length, model.prediction_length = 4, 2
+    historic = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 7)])
+    future_no_target = _frame(["A", "B"], ["2020-07", "2020-08"], with_target=False, seed=3)
+
+    with pytest.raises(ValueError, match="disease_cases"):
+        model.set_validation_data(historic, future_no_target)
+
+
+def test_validation_features_are_scaled_after_train():
+    # The fitted scaler must be applied to the validation window too, otherwise
+    # the reported validation loss is computed on raw features and is not
+    # comparable to the training loss.
+    model = AutoRegressiveModel()
+    model.context_length, model.prediction_length, model.n_iter = 4, 2, 2
+    historic = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 7)])
+    future = _frame(["A", "B"], ["2020-07", "2020-08"], with_target=True, seed=4)
+    model.set_validation_data(historic, future)
+
+    before = model._validation_loader.dataset[0][0]
+    model.train(_frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 13)]))
+    after = model._validation_loader.dataset[0][0]
+
+    assert not np.allclose(before, after)  # raw features were standardized in place

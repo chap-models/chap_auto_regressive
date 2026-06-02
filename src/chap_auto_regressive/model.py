@@ -63,13 +63,15 @@ def _forecast_frame(future: pd.DataFrame, samples: Any) -> pd.DataFrame:
         ``sample_i`` column per draw.
     """
     groups = list(location_groups(future))
-    time_period = groups[0][1]["time_period"].to_numpy()
     frames = []
-    for (location, _sub), location_samples in zip(groups, samples):
+    for (location, sub), location_samples in zip(groups, samples):
         location_samples = np.asarray(location_samples)
         frame = pd.DataFrame({f"sample_{i}": location_samples[:, i] for i in range(location_samples.shape[-1])})
         frame.insert(0, "location", location)
-        frame.insert(0, "time_period", time_period)
+        # Label each location with its own forecast periods. location_groups
+        # sorts each group by time_period, matching the order the samples were
+        # produced in, so locations with differing future periods stay correct.
+        frame.insert(0, "time_period", sub["time_period"].to_numpy())
         frames.append(frame)
     return pd.concat(frames, ignore_index=True)
 
@@ -227,12 +229,27 @@ class AutoRegressiveModel:
         """Provide a held-out window for validation-loss reporting during training.
 
         The supplied history and future are concatenated into a single window and
-        wrapped in a loader the trainer evaluates periodically.
+        wrapped in a loader the trainer evaluates periodically. Unlike forecasting,
+        the validation ``future`` must include observed ``disease_cases`` — they
+        are the labels the validation loss is computed against.
+
+        The fitted feature scaler is attached later, inside
+        [`train`][chap_auto_regressive.model.AutoRegressiveModel.train], so the
+        validation features are standardized the same way as the training ones.
 
         Args:
             historic: History including observed cases.
-            future: The matching future periods with their covariates.
+            future: The matching future periods, with both covariates and observed
+                ``disease_cases``.
+
+        Raises:
+            ValueError: If ``future`` has no ``disease_cases`` column.
         """
+        if "disease_cases" not in future.columns:
+            raise ValueError(
+                "validation future must include observed disease_cases (they are the "
+                "labels the validation loss is computed against)"
+            )
         x, y = get_series(historic)
         x = x[:, -self.context_length :]
         y = y[:, -self.context_length :]
@@ -261,6 +278,11 @@ class AutoRegressiveModel:
         data_set = self._get_dataset(data)
         self._transform = ZScaler.from_data(data_set)
         data_set.set_transform(self._transform)
+        # Standardize the validation window with the same fitted scaler, otherwise
+        # its features stay on the raw scale and the reported validation loss is
+        # not comparable to the training loss.
+        if self._validation_loader is not None:
+            self._validation_loader.dataset.set_transform(self._transform)
         self._n_locations = data["location"].nunique()
         data_loader = SimpleDataLoader(data_set)
         trainer = Trainer(
