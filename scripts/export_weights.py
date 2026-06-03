@@ -87,7 +87,7 @@ def export(
         "locations": list(locations) if locations is not None else None,
     }
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"wrote {out/'weights.safetensors'} ({len(tensors)} tensors) and {out/'meta.json'}")
+    print(f"wrote {out / 'weights.safetensors'} ({len(tensors)} tensors) and {out / 'meta.json'}")
 
 
 def main() -> None:

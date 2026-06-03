@@ -15,13 +15,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from export_weights import export
 from safetensors.numpy import save_file
 
 from chap_auto_regressive import AutoRegressiveModel
 from chap_auto_regressive.data_loader import DataSet as DLDataSet
 from chap_auto_regressive.transforms import get_series
-
-from export_weights import export
 
 CONTEXT_LENGTH = 4
 PREDICTION_LENGTH = 2
