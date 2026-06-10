@@ -130,7 +130,10 @@ class FlaxPredictor:
         covariates: Sequence[str] = REQUIRED_COVARIATES,
     ):
         self.model = model
-        self._params = params
+        # Accept either a single parameter pytree or a list of them (a deep
+        # ensemble). Stored as a list; predict pools the members' samples.
+        self._params_list = params if isinstance(params, list) else [params]
+        self._params = self._params_list[0]
         self._transform = transform
         self.prediction_length = prediction_length
         self.context_length = context_length
@@ -182,9 +185,19 @@ class FlaxPredictor:
         dataset = DLDataSet(full_x, prev_y, forecast_length=self.prediction_length, context_length=self.context_length)
         dataset.set_transform(self._transform)
         x, y = dataset.prediction_instance()
-        eta = self.model.apply(self._params, x, y)
         n_prev = prev_values.shape[1]
-        samples = self.get_samples(eta[:, n_prev - 1 :], num_samples)
+        # Pool samples across the ensemble members. Each member draws an equal
+        # share of num_samples (the first members absorb the remainder) so the
+        # output keeps exactly num_samples columns.
+        n_members = len(self._params_list)
+        shares = [num_samples // n_members + (1 if k < num_samples % n_members else 0) for k in range(n_members)]
+        member_samples = []
+        for params, share in zip(self._params_list, shares):
+            if share == 0:
+                continue
+            eta = self.model.apply(params, x, y)
+            member_samples.append(np.asarray(self.get_samples(eta[:, n_prev - 1 :], share)))
+        samples = np.concatenate(member_samples, axis=-1)  # pool along the trailing sample axis
         return _forecast_frame(future, samples)
 
     def save(self, path: str) -> None:
@@ -194,7 +207,7 @@ class FlaxPredictor:
             path: Destination file path.
         """
         with open(path, "wb") as f:
-            pickle.dump((self._params, self._transform, self.locations, self.covariates), f)
+            pickle.dump((self._params_list, self._transform, self.locations, self.covariates), f)
 
     @classmethod
     def load(cls, path: str, *args: Any, **kwargs: Any) -> "FlaxPredictor":
@@ -253,6 +266,10 @@ class AutoRegressiveModel:
     context_length = 24
     learning_rate = 1e-4
     additional_covariates: Sequence[str] = ()
+    # Number of independently seeded models to train and pool at predict time.
+    # >1 turns the forecaster into a deep ensemble, which improves the calibration
+    # of the predictive distribution (and hence CRPS).
+    n_ensemble: int = 1
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, rng_key=jax.random.PRNGKey(100)):
@@ -363,13 +380,19 @@ class AutoRegressiveModel:
             self._validation_loader.dataset.set_transform(self._transform)
         self._n_locations = data["location"].nunique()
         data_loader = SimpleDataLoader(data_set)
-        trainer = Trainer(
-            self.model, self.n_iter, learning_rate=self.learning_rate, validation_loader=self._validation_loader
-        )
-        state = trainer.train(data_loader, self._loss)
-        self._params = state.params
+        params_list = []
+        for member in range(max(1, self.n_ensemble)):
+            trainer = Trainer(
+                self.model,
+                self.n_iter,
+                learning_rate=self.learning_rate,
+                validation_loader=self._validation_loader,
+                seed=member,
+            )
+            params_list.append(trainer.train(data_loader, self._loss).params)
+        self._params = params_list[0]
         return FlaxPredictor(
-            self._params,
+            params_list,
             self._transform,
             self.model,
             self.prediction_length,

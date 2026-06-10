@@ -36,14 +36,14 @@ def _frame(locations, periods, with_target=True, seed=0):
 def test_get_series_shapes_and_target():
     months = [f"2020-{m:02d}" for m in range(1, 7)]
     x, y = get_series(_frame(["A", "B"], months))
-    assert x.shape == (2, 6, 4)  # 2 locations, 6 periods, 4 features
+    assert x.shape == (2, 6, 8)  # 2 locations, 6 periods, 3 covariates + 5 seasonal features
     assert y.shape == (2, 6)
 
 
 def test_get_series_future_has_no_target():
     months = [f"2020-{m:02d}" for m in range(1, 7)]
     x, y = get_series(_frame(["A", "B"], months, with_target=False))
-    assert x.shape == (2, 6, 4)
+    assert x.shape == (2, 6, 8)
     assert y.size == 0
 
 
@@ -196,6 +196,28 @@ def test_validation_features_are_scaled_after_train():
     assert not np.allclose(before, after)  # raw features were standardized in place
 
 
+def test_ensemble_trains_pools_and_roundtrips(tmp_path):
+    # n_ensemble>1 trains several seeded members and pools their samples; the
+    # output still has exactly num_samples columns and survives save/load.
+    train_df = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 13)])
+    future = _frame(["A", "B"], ["2021-01", "2021-02"], with_target=False, seed=1)
+    model = AutoRegressiveModel()
+    model.context_length, model.prediction_length, model.n_iter = 4, 2, 2
+    model.n_ensemble = 3
+    predictor = model.train(train_df)
+    assert len(predictor._params_list) == 3
+
+    out = predictor.predict(train_df, future, num_samples=12)
+    sample_cols = [c for c in out.columns if c.startswith("sample_")]
+    assert len(sample_cols) == 12  # pooled to exactly num_samples
+    assert np.isfinite(out[sample_cols].to_numpy()).all()
+
+    path = str(tmp_path / "ens.pkl")
+    predictor.save(path)
+    loaded = model.load_predictor(path)
+    assert len(loaded._params_list) == 3
+
+
 def _add_covariate(df, name="relative_humidity", seed=7):
     """Append a non-NaN extra covariate column to a ``_frame`` dataframe."""
     rng = np.random.RandomState(seed)
@@ -217,7 +239,7 @@ def test_get_series_appends_additional_covariate_feature():
     months = [f"2020-{m:02d}" for m in range(1, 7)]
     df = _add_covariate(_frame(["A", "B"], months))
     x, _ = get_series(df, list(REQUIRED_COVARIATES) + ["relative_humidity"])
-    assert x.shape == (2, 6, 5)  # 3 required + 1 extra covariate + year_position
+    assert x.shape == (2, 6, 9)  # 3 required + 1 extra covariate + 5 seasonal features
 
 
 def test_get_series_missing_covariate_raises():
