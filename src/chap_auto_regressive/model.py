@@ -12,7 +12,7 @@ and time period); the model itself has no dependency on chap-core.
 """
 
 import pickle
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -24,7 +24,7 @@ from .data_loader import SimpleDataLoader
 from .distributions import nb_head
 from .rnn_model import model_makers
 from .trainer import Trainer
-from .transforms import ZScaler, get_series, location_groups
+from .transforms import REQUIRED_COVARIATES, ZScaler, get_series, location_groups
 
 
 def _check_predict_inputs(
@@ -127,6 +127,7 @@ class FlaxPredictor:
         prediction_length: int,
         context_length: int,
         locations: list | None = None,
+        covariates: Sequence[str] = REQUIRED_COVARIATES,
     ):
         self.model = model
         self._params = params
@@ -137,6 +138,10 @@ class FlaxPredictor:
         # set because the network's per-location embeddings are indexed by sorted
         # position. None only for predictors loaded from a legacy pickle.
         self.locations = list(locations) if locations is not None else None
+        # The covariate columns (in order) the network was trained on; predict
+        # must build features the same way. Defaults to the required covariates
+        # for predictors loaded from a legacy pickle that predate this field.
+        self.covariates = tuple(covariates)
         self.rng_key = jax.random.PRNGKey(1234)
 
     def get_samples(self, eta: Any, n_samples: int) -> Any:
@@ -169,8 +174,8 @@ class FlaxPredictor:
             column per draw.
         """
         _check_predict_inputs(historic, future, self.prediction_length, self.context_length, self.locations)
-        x, _ = get_series(future)
-        prev_values, prev_y = get_series(historic)
+        x, _ = get_series(future, self.covariates)
+        prev_values, prev_y = get_series(historic, self.covariates)
         prev_values = prev_values[:, -self.context_length :]
         prev_y = prev_y[:, -self.context_length :]
         full_x = jnp.concatenate([prev_values, x], axis=1)
@@ -189,7 +194,7 @@ class FlaxPredictor:
             path: Destination file path.
         """
         with open(path, "wb") as f:
-            pickle.dump((self._params, self._transform, self.locations), f)
+            pickle.dump((self._params, self._transform, self.locations, self.covariates), f)
 
     @classmethod
     def load(cls, path: str, *args: Any, **kwargs: Any) -> "FlaxPredictor":
@@ -206,13 +211,12 @@ class FlaxPredictor:
         """
         with open(path, "rb") as f:
             payload = pickle.load(f)
-        # Predictors pickled before locations were tracked hold a 2-tuple.
-        if len(payload) == 2:
-            params, transform = payload
-            locations = None
-        else:
-            params, transform, locations = payload
-        return cls(params, transform, *args, locations=locations, **kwargs)
+        # Older pickles are shorter: a 2-tuple predates location tracking, a
+        # 3-tuple predates covariate tracking. Fill in defaults so they still load.
+        params, transform = payload[0], payload[1]
+        locations = payload[2] if len(payload) >= 3 else None
+        covariates = payload[3] if len(payload) >= 4 else REQUIRED_COVARIATES
+        return cls(params, transform, *args, locations=locations, covariates=covariates, **kwargs)
 
 
 class AutoRegressiveModel:
@@ -226,7 +230,9 @@ class AutoRegressiveModel:
 
     All input/output is via tidy :class:`pandas.DataFrame` objects with the columns
     ``location``, ``time_period``, ``rainfall``, ``mean_temperature``,
-    ``population`` and (for training) ``disease_cases``.
+    ``population`` and (for training) ``disease_cases``. Listing extra column
+    names in ``additional_covariates`` feeds them to the network as further
+    features, on top of the always-present required three.
 
     Attributes:
         rnn_model_name: Which [`model_makers`][chap_auto_regressive.rnn_model.model_makers]
@@ -235,6 +241,9 @@ class AutoRegressiveModel:
         n_iter: Number of training epochs.
         context_length: Number of past periods read as context.
         learning_rate: Adam learning rate.
+        additional_covariates: Extra covariate columns to use as features,
+            appended after the required ``rainfall``, ``mean_temperature`` and
+            ``population``. Empty by default.
         distribution_head: Maps the network output to the sampling distribution.
     """
 
@@ -243,6 +252,7 @@ class AutoRegressiveModel:
     n_iter: int = 1000
     context_length = 24
     learning_rate = 1e-4
+    additional_covariates: Sequence[str] = ()
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, rng_key=jax.random.PRNGKey(100)):
@@ -253,6 +263,16 @@ class AutoRegressiveModel:
         self._validation_loader = None
         self._locations: list | None = None
         self._validation_locations: list | None = None
+
+    @property
+    def covariates(self) -> tuple[str, ...]:
+        """The feature covariates in order: the required three then any extras.
+
+        Additional covariates that duplicate a required one are ignored, so the
+        required covariates always lead exactly once.
+        """
+        extra = tuple(c for c in self.additional_covariates if c not in REQUIRED_COVARIATES)
+        return REQUIRED_COVARIATES + extra
 
     def set_model(self, model: Any) -> None:
         """Override the network instance instead of building one lazily.
@@ -271,7 +291,7 @@ class AutoRegressiveModel:
 
     def _get_dataset(self, data: pd.DataFrame) -> DLDataSet:
         """Build a windowed dataset from the input frame."""
-        x, y = get_series(data)
+        x, y = get_series(data, self.covariates)
         return DLDataSet(x, y, forecast_length=self.prediction_length, context_length=self.context_length)
 
     def set_validation_data(self, historic: pd.DataFrame, future: pd.DataFrame) -> None:
@@ -302,10 +322,10 @@ class AutoRegressiveModel:
         if set(historic["location"].unique()) != set(future["location"].unique()):
             raise ValueError("validation historic and future must cover the same set of locations")
         self._validation_locations = sorted(historic["location"].unique())
-        x, y = get_series(historic)
+        x, y = get_series(historic, self.covariates)
         x = x[:, -self.context_length :]
         y = y[:, -self.context_length :]
-        fx, fy = get_series(future)
+        fx, fy = get_series(future, self.covariates)
         full_x = np.concatenate([x, fx], axis=1)
         full_y = np.concatenate([y, fy], axis=1)
         self._validation_loader = SimpleDataLoader(
@@ -355,6 +375,7 @@ class AutoRegressiveModel:
             self.prediction_length,
             self.context_length,
             locations=self._locations,
+            covariates=self.covariates,
         )
 
     def load_predictor(self, path: str) -> FlaxPredictor:
