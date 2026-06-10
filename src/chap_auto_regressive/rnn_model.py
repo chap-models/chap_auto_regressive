@@ -162,7 +162,7 @@ class ARModel2(nn.Module):
         states = nn.RNN(self.cell_pre)(prev_x)
         new_states = nn.RNN(self.cell_post)(x[..., n_y + 1 :, :], initial_carry=states[..., -1, :])
         x = jnp.concatenate([states, new_states], axis=-2)
-        x = nn.Dense(features=6)(x)
+        x = nn.Dense(features=12)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.output_dim)(x)
         return x
@@ -170,9 +170,9 @@ class ARModel2(nn.Module):
 
 model_makers = {
     "base": lambda n_locations: ARModel2(
-        Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),
-        SimpleCell(features=4),
-        SimpleCell(features=4),
+        Preprocess(n_locations=n_locations, n_hidden=8, embedding_dim=8, output_dim=4, dropout_rate=0.2),
+        SimpleCell(features=8),
+        SimpleCell(features=8),
     ),
     "multi_value": lambda n_locations: ARModel2(
         Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),

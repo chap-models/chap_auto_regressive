@@ -132,9 +132,16 @@ def get_series(data: pd.DataFrame, covariates: Sequence[str] = REQUIRED_COVARIAT
     counts = {}
     for location, sub in location_groups(data):
         counts[location] = len(sub)
-        year_position = [year_position_from_period(period) for period in sub["time_period"]]
+        yp = np.asarray([year_position_from_period(period) for period in sub["time_period"]])
         features = [sub[name].to_numpy() for name in covariates]
-        features.append(np.asarray(year_position))
+        # Seasonal calendar features: the year-position ramp plus the first two
+        # Fourier harmonics, which give the network a smooth, periodic seasonal
+        # signal (a single ramp cannot express the seasonal shape on its own).
+        features.append(yp)
+        features.append(np.sin(2 * np.pi * yp))
+        features.append(np.cos(2 * np.pi * yp))
+        features.append(np.sin(4 * np.pi * yp))
+        features.append(np.cos(4 * np.pi * yp))
         xs.append(np.array(features).T)
         if has_target:
             ys.append(sub["disease_cases"].to_numpy())
