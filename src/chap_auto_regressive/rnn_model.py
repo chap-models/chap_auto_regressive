@@ -10,6 +10,7 @@ an auto-regressive join ([`ARAdder`][chap_auto_regressive.rnn_model.ARAdder]), a
 Array convention: ``batch x location x time x feature``.
 """
 
+import os
 from typing import Any
 
 import flax.linen as nn
@@ -17,6 +18,15 @@ import jax.numpy as jnp
 from flax.linen import SimpleCell
 
 # Dimensions: batch_dim x location_dim x time_dim x feature_dim
+
+# Experiment knobs (env-configurable while screening architectures).
+_CELLS = {"simple": SimpleCell, "gru": nn.GRUCell}
+_CELL = _CELLS[os.environ.get("AR_CELL", "simple")]
+_RNN_FEAT = int(os.environ.get("AR_RNN_FEAT", "8"))
+_PRE_HIDDEN = int(os.environ.get("AR_PRE_HIDDEN", "8"))
+_PRE_OUT = int(os.environ.get("AR_PRE_OUT", "4"))
+_EMBED = int(os.environ.get("AR_EMBED", "8"))
+_HEAD = int(os.environ.get("AR_HEAD", "12"))
 
 
 class Preprocess(nn.Module):
@@ -162,7 +172,7 @@ class ARModel2(nn.Module):
         states = nn.RNN(self.cell_pre)(prev_x)
         new_states = nn.RNN(self.cell_post)(x[..., n_y + 1 :, :], initial_carry=states[..., -1, :])
         x = jnp.concatenate([states, new_states], axis=-2)
-        x = nn.Dense(features=12)(x)
+        x = nn.Dense(features=_HEAD)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.output_dim)(x)
         return x
@@ -170,9 +180,15 @@ class ARModel2(nn.Module):
 
 model_makers = {
     "base": lambda n_locations: ARModel2(
-        Preprocess(n_locations=n_locations, n_hidden=8, embedding_dim=8, output_dim=4, dropout_rate=0.2),
-        SimpleCell(features=8),
-        SimpleCell(features=8),
+        Preprocess(
+            n_locations=n_locations,
+            n_hidden=_PRE_HIDDEN,
+            embedding_dim=_EMBED,
+            output_dim=_PRE_OUT,
+            dropout_rate=0.2,
+        ),
+        _CELL(features=_RNN_FEAT),
+        _CELL(features=_RNN_FEAT),
     ),
     "multi_value": lambda n_locations: ARModel2(
         Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),
