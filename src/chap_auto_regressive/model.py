@@ -433,11 +433,15 @@ class AutoRegressiveModel:
         return -self.distribution_head(eta_pred).log_prob(y_true[..., 1:])
 
     def _loss(self, y_pred: Any, y_true: Any) -> Any:
-        """Aggregate the per-period loss, emphasizing the forecast horizon."""
+        """Aggregate the per-period loss over the whole window, emphasizing the horizon.
+
+        Training on every period (not just the forecast horizon) gives the
+        auto-regressive encoder one-step-ahead supervision across the whole
+        context, which is far more signal than the 3 horizon periods alone; the
+        extra horizon term keeps the forecast region weighted up.
+        """
         L = self.loss_func(y_pred, y_true)
-        return jnp.mean(L[:, -self.prediction_length :]) / self.context_length + jnp.mean(
-            L[:, -self.prediction_length :]
-        )
+        return jnp.mean(L) + jnp.mean(L[:, -self.prediction_length :])
 
     def get_samples(self, eta: Any, n_samples: int) -> Any:
         """Draw samples from the output distribution for each period.

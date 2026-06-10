@@ -89,7 +89,9 @@ class ARAdder(nn.Module):
             Features with the lagged target appended on the feature axis.
         """
         n_y = y.shape[-1]
-        return jnp.concatenate([y[..., None], x[..., 1 : n_y + 1, :]], axis=-1)
+        # log1p the auto-regressive input so it sits on a comparable scale to the
+        # z-scored covariate features instead of swamping them with raw counts.
+        return jnp.concatenate([jnp.log1p(y)[..., None], x[..., 1 : n_y + 1, :]], axis=-1)
 
 
 class MultiValueARAdder(nn.Module):
