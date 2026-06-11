@@ -46,6 +46,7 @@ class Preprocess(nn.Module):
     embedding_dim: int = 4
     output_dim: int = 1
     dropout_rate: float = 0.2
+    input_dropout_rate: float = 0.0
 
     @nn.compact
     def __call__(self, x: Any, training: bool = False) -> Any:
@@ -58,6 +59,15 @@ class Preprocess(nn.Module):
         Returns:
             The projected features, shape ``(..., locations, time, output_dim)``.
         """
+        if self.input_dropout_rate > 0.0:
+            # Feature dropout: zero entire covariate channels (one mask per feature,
+            # shared across location/time) so the network can't over-rely on any
+            # single (possibly noisy) covariate — robustness with many covariates.
+            x = nn.Dropout(
+                rate=self.input_dropout_rate,
+                broadcast_dims=tuple(range(x.ndim - 1)),
+                deterministic=not training,
+            )(x)
         n_locations = x.shape[-3]
         loc = nn.Embed(num_embeddings=n_locations, features=self.embedding_dim)(jnp.arange(n_locations))
         axis = -2
@@ -228,6 +238,7 @@ def build_network(
     rnn_layers: int = 1,
     recursive_decode: bool = False,
     dropout_rate: float = 0.2,
+    input_dropout_rate: float = 0.0,
 ) -> ARModel2:
     """Build an [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] from explicit hyperparameters.
 
@@ -254,6 +265,7 @@ def build_network(
             embedding_dim=embedding_dim,
             output_dim=preprocess_output,
             dropout_rate=dropout_rate,
+            input_dropout_rate=input_dropout_rate,
         ),
         cell_cls(features=rnn_features),
         cell_cls(features=rnn_features),

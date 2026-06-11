@@ -304,6 +304,7 @@ class AutoRegressiveModel:
     rnn_layers: int = 1
     recursive_decode: bool = False
     dropout_rate: float = 0.2
+    input_dropout_rate: float = 0.0
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, rng_key=jax.random.PRNGKey(100)):
@@ -338,6 +339,7 @@ class AutoRegressiveModel:
             "rnn_layers": self.rnn_layers,
             "recursive_decode": self.recursive_decode,
             "dropout_rate": self.dropout_rate,
+            "input_dropout_rate": self.input_dropout_rate,
         }
 
     def set_model(self, model: Any) -> None:
