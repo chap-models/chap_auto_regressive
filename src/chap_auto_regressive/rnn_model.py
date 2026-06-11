@@ -10,7 +10,6 @@ an auto-regressive join ([`ARAdder`][chap_auto_regressive.rnn_model.ARAdder]), a
 Array convention: ``batch x location x time x feature``.
 """
 
-import os
 from typing import Any
 
 import flax.linen as nn
@@ -19,14 +18,9 @@ from flax.linen import SimpleCell
 
 # Dimensions: batch_dim x location_dim x time_dim x feature_dim
 
-# Experiment knobs (env-configurable while screening architectures).
-_CELLS = {"simple": SimpleCell, "gru": nn.GRUCell}
-_CELL = _CELLS[os.environ.get("AR_CELL", "simple")]
-_RNN_FEAT = int(os.environ.get("AR_RNN_FEAT", "8"))
-_PRE_HIDDEN = int(os.environ.get("AR_PRE_HIDDEN", "8"))
-_PRE_OUT = int(os.environ.get("AR_PRE_OUT", "4"))
-_EMBED = int(os.environ.get("AR_EMBED", "8"))
-_HEAD = int(os.environ.get("AR_HEAD", "12"))
+#: Recurrent cell types selectable by name. ``"gru"`` (gated) handles the
+#: multi-step forecast horizon markedly better than the plain ``"simple"`` RNN.
+CELL_TYPES = {"simple": SimpleCell, "gru": nn.GRUCell}
 
 
 class Preprocess(nn.Module):
@@ -146,6 +140,8 @@ class ARModel2(nn.Module):
         cell_post: The recurrent cell used to decode the forecast horizon.
         ar_adder: The auto-regressive join module.
         output_dim: Number of output channels per period (2 for the NB head).
+        head_features: Width of the hidden dense layer mapping the combined
+            encoder/decoder states to ``eta``.
     """
 
     preprocess: nn.Module
@@ -153,6 +149,7 @@ class ARModel2(nn.Module):
     cell_post: nn.RNNCellBase
     ar_adder: ARAdder = ARAdder()
     output_dim: int = 2
+    head_features: int = 6
 
     @nn.compact
     def __call__(self, x: Any, y: Any, training: bool = False) -> Any:
@@ -172,24 +169,58 @@ class ARModel2(nn.Module):
         states = nn.RNN(self.cell_pre)(prev_x)
         new_states = nn.RNN(self.cell_post)(x[..., n_y + 1 :, :], initial_carry=states[..., -1, :])
         x = jnp.concatenate([states, new_states], axis=-2)
-        x = nn.Dense(features=_HEAD)(x)
+        x = nn.Dense(features=self.head_features)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.output_dim)(x)
         return x
 
 
-model_makers = {
-    "base": lambda n_locations: ARModel2(
+def build_network(
+    n_locations: int,
+    *,
+    cell: str = "gru",
+    rnn_features: int = 16,
+    preprocess_hidden: int = 16,
+    preprocess_output: int = 8,
+    embedding_dim: int = 8,
+    head_features: int = 24,
+    dropout_rate: float = 0.2,
+) -> ARModel2:
+    """Build an [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] from explicit hyperparameters.
+
+    Args:
+        n_locations: Number of locations (passed to the preprocess stage).
+        cell: Recurrent cell type, a key of
+            [`CELL_TYPES`][chap_auto_regressive.rnn_model.CELL_TYPES] (``"gru"`` or ``"simple"``).
+        rnn_features: Hidden width of the encoder and decoder cells.
+        preprocess_hidden: Hidden width of the per-location preprocess stack.
+        preprocess_output: Output width of the preprocess stage.
+        embedding_dim: Size of the per-location embedding.
+        head_features: Hidden width of the output head.
+        dropout_rate: Dropout probability in the preprocess stage.
+
+    Returns:
+        The configured network.
+    """
+    cell_cls = CELL_TYPES[cell]
+    return ARModel2(
         Preprocess(
             n_locations=n_locations,
-            n_hidden=_PRE_HIDDEN,
-            embedding_dim=_EMBED,
-            output_dim=_PRE_OUT,
-            dropout_rate=0.2,
+            n_hidden=preprocess_hidden,
+            embedding_dim=embedding_dim,
+            output_dim=preprocess_output,
+            dropout_rate=dropout_rate,
         ),
-        _CELL(features=_RNN_FEAT),
-        _CELL(features=_RNN_FEAT),
-    ),
+        cell_cls(features=rnn_features),
+        cell_cls(features=rnn_features),
+        head_features=head_features,
+    )
+
+
+# Back-compat: the original named factories. ``"base"`` builds the default network
+# (now GRU-based); ``"multi_value"`` swaps in the cross-location auto-regressive join.
+model_makers = {
+    "base": lambda n_locations: build_network(n_locations),
     "multi_value": lambda n_locations: ARModel2(
         Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),
         nn.SimpleCell(features=4),
@@ -197,9 +228,3 @@ model_makers = {
         ar_adder=MultiValueARAdder(),
     ),
 }
-"""Named factories that build a configured [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2].
-
-``"base"`` uses the per-location auto-regressive join; ``"multi_value"`` swaps in
-[`MultiValueARAdder`][chap_auto_regressive.rnn_model.MultiValueARAdder] to also mix targets
-across locations. Each factory takes the number of locations and returns a model.
-"""

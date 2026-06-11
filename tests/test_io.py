@@ -12,6 +12,7 @@ def _small_trained_model():
     model.context_length = 4
     model.prediction_length = 2
     model.n_iter = 2
+    model.n_ensemble = 1  # keep the fixture fast; ensembling is covered separately
     return model, model.train(train_df), train_df
 
 
@@ -57,6 +58,7 @@ def test_train_predict_roundtrip_returns_sample_frame():
     model.context_length = 4
     model.prediction_length = 2
     model.n_iter = 2
+    model.n_ensemble = 1
     predictor = model.train(train_df)
 
     out = predictor.predict(train_df, future_df, num_samples=10)
@@ -185,6 +187,7 @@ def test_validation_features_are_scaled_after_train():
     # comparable to the training loss.
     model = AutoRegressiveModel()
     model.context_length, model.prediction_length, model.n_iter = 4, 2, 2
+    model.n_ensemble = 1
     historic = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 7)])
     future = _frame(["A", "B"], ["2020-07", "2020-08"], with_target=True, seed=4)
     model.set_validation_data(historic, future)
@@ -259,6 +262,7 @@ def test_train_predict_roundtrip_with_additional_covariate(tmp_path):
 
     model = AutoRegressiveModel()
     model.context_length, model.prediction_length, model.n_iter = 4, 2, 2
+    model.n_ensemble = 1
     model.additional_covariates = ["relative_humidity"]
     predictor = model.train(train_df)
     assert predictor.covariates == REQUIRED_COVARIATES + ("relative_humidity",)
@@ -276,3 +280,25 @@ def test_train_predict_roundtrip_with_additional_covariate(tmp_path):
             future_df.drop(columns="relative_humidity"),
             num_samples=4,
         )
+
+
+def test_saved_predictor_rebuilds_its_architecture(tmp_path):
+    # The architecture is persisted, so a predictor saved by one model loads and
+    # predicts correctly even when the loading model is configured differently
+    # (this is what predict.py does — it has no access to the training config).
+    train_df = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 13)])
+    future = _frame(["A", "B"], ["2021-01", "2021-02"], with_target=False, seed=1)
+    model = AutoRegressiveModel()
+    model.context_length, model.prediction_length, model.n_iter, model.n_ensemble = 4, 2, 2, 1
+    model.cell, model.rnn_features, model.head_features = "simple", 5, 7  # non-default architecture
+    predictor = model.train(train_df)
+    path = str(tmp_path / "m.pkl")
+    predictor.save(path)
+
+    other = AutoRegressiveModel()  # defaults: gru / 16 / 24
+    loaded = other.load_predictor(path)
+    assert loaded.architecture["cell"] == "simple"
+    assert loaded.architecture["rnn_features"] == 5
+    assert loaded.architecture["head_features"] == 7
+    out = loaded.predict(train_df, future, num_samples=6)
+    assert np.isfinite(out[[c for c in out.columns if c.startswith("sample_")]].to_numpy()).all()
