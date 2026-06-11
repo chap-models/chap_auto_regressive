@@ -13,6 +13,7 @@ Array convention: ``batch x location x time x feature``.
 from typing import Any
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
 from flax.linen import SimpleCell
 
@@ -151,6 +152,7 @@ class ARModel2(nn.Module):
     output_dim: int = 2
     head_features: int = 6
     n_layers: int = 1
+    recursive_decode: bool = False
 
     @nn.compact
     def __call__(self, x: Any, y: Any, training: bool = False) -> Any:
@@ -168,6 +170,30 @@ class ARModel2(nn.Module):
         n_y = y.shape[-1]
         prev_x = self.ar_adder(x, y)
         future_x = x[..., n_y + 1 :, :]
+        if self.recursive_decode:
+            # Decode the horizon one step at a time, feeding each step's predicted
+            # (log) mean back as the next step's auto-regressive input — the same
+            # recursion a classical AR model uses, which keeps the multi-step
+            # forecast anchored instead of drifting. Train and predict run this
+            # identically (free-running), so there is no train/predict mismatch.
+            d1, d2 = nn.Dense(self.head_features), nn.Dense(self.output_dim)
+
+            def head(h):
+                return d2(nn.relu(d1(h)))
+
+            states = nn.RNN(self.cell_pre)(prev_x)
+            ctx_eta = head(states)
+            carry = states[..., -1, :]
+            prev_val = jnp.log1p(jnp.maximum(y[..., -1:], 0.0))  # last observed (log1p)
+            etas = []
+            for t in range(future_x.shape[-2]):
+                step_in = jnp.concatenate([prev_val, future_x[..., t, :]], axis=-1)
+                carry, out = self.cell_post(carry, step_in)
+                eta_t = head(out)
+                etas.append(eta_t)
+                mean = jax.nn.softplus(eta_t[..., 0]) * jnp.exp(eta_t[..., 1])  # NB mean
+                prev_val = jnp.log1p(jnp.maximum(mean, 0.0))[..., None]
+            return jnp.concatenate([ctx_eta, jnp.stack(etas, axis=-2)], axis=-2)
         if self.n_layers <= 1:
             states = nn.RNN(self.cell_pre)(prev_x)
             new_states = nn.RNN(self.cell_post)(future_x, initial_carry=states[..., -1, :])
@@ -200,6 +226,7 @@ def build_network(
     embedding_dim: int = 8,
     head_features: int = 24,
     rnn_layers: int = 1,
+    recursive_decode: bool = False,
     dropout_rate: float = 0.2,
 ) -> ARModel2:
     """Build an [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] from explicit hyperparameters.
@@ -232,6 +259,7 @@ def build_network(
         cell_cls(features=rnn_features),
         head_features=head_features,
         n_layers=rnn_layers,
+        recursive_decode=recursive_decode,
     )
 
 

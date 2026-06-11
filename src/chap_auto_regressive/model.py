@@ -302,6 +302,7 @@ class AutoRegressiveModel:
     embedding_dim: int = 8
     head_features: int = 24
     rnn_layers: int = 1
+    recursive_decode: bool = False
     dropout_rate: float = 0.2
     distribution_head = staticmethod(nb_head)
 
@@ -335,6 +336,7 @@ class AutoRegressiveModel:
             "embedding_dim": self.embedding_dim,
             "head_features": self.head_features,
             "rnn_layers": self.rnn_layers,
+            "recursive_decode": self.recursive_decode,
             "dropout_rate": self.dropout_rate,
         }
 
