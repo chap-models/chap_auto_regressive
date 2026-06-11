@@ -301,6 +301,7 @@ class AutoRegressiveModel:
     preprocess_output: int = 8
     embedding_dim: int = 8
     head_features: int = 24
+    rnn_layers: int = 1
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, rng_key=jax.random.PRNGKey(100)):
@@ -332,6 +333,7 @@ class AutoRegressiveModel:
             "preprocess_output": self.preprocess_output,
             "embedding_dim": self.embedding_dim,
             "head_features": self.head_features,
+            "rnn_layers": self.rnn_layers,
         }
 
     def set_model(self, model: Any) -> None:

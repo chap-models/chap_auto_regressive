@@ -302,3 +302,17 @@ def test_saved_predictor_rebuilds_its_architecture(tmp_path):
     assert loaded.architecture["head_features"] == 7
     out = loaded.predict(train_df, future, num_samples=6)
     assert np.isfinite(out[[c for c in out.columns if c.startswith("sample_")]].to_numpy()).all()
+
+
+def test_stacked_rnn_layers_train_and_predict():
+    # n_layers > 1 stacks encoder/decoder RNNs; it must train and predict, and the
+    # choice is persisted in the architecture so predict rebuilds the same depth.
+    train_df = _frame(["A", "B"], [f"2020-{m:02d}" for m in range(1, 13)])
+    future = _frame(["A", "B"], ["2021-01", "2021-02"], with_target=False, seed=1)
+    model = AutoRegressiveModel()
+    model.context_length, model.prediction_length, model.n_iter, model.n_ensemble = 4, 2, 2, 1
+    model.rnn_layers = 2
+    predictor = model.train(train_df)
+    assert predictor.architecture["rnn_layers"] == 2
+    out = predictor.predict(train_df, future, num_samples=6)
+    assert np.isfinite(out[[c for c in out.columns if c.startswith("sample_")]].to_numpy()).all()

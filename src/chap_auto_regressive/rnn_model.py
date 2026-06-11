@@ -150,6 +150,7 @@ class ARModel2(nn.Module):
     ar_adder: ARAdder = ARAdder()
     output_dim: int = 2
     head_features: int = 6
+    n_layers: int = 1
 
     @nn.compact
     def __call__(self, x: Any, y: Any, training: bool = False) -> Any:
@@ -166,8 +167,22 @@ class ARModel2(nn.Module):
         x = self.preprocess(x, training=training)
         n_y = y.shape[-1]
         prev_x = self.ar_adder(x, y)
-        states = nn.RNN(self.cell_pre)(prev_x)
-        new_states = nn.RNN(self.cell_post)(x[..., n_y + 1 :, :], initial_carry=states[..., -1, :])
+        future_x = x[..., n_y + 1 :, :]
+        if self.n_layers <= 1:
+            states = nn.RNN(self.cell_pre)(prev_x)
+            new_states = nn.RNN(self.cell_post)(future_x, initial_carry=states[..., -1, :])
+        else:
+            # Stacked encoder/decoder: each encoder layer's final state seeds the
+            # matching decoder layer, giving the forecast horizon more depth.
+            cell_cls, feats = type(self.cell_pre), self.cell_pre.features
+            enc, carries = prev_x, []
+            for _ in range(self.n_layers):
+                enc = nn.RNN(cell_cls(features=feats))(enc)
+                carries.append(enc[..., -1, :])
+            dec = future_x
+            for layer in range(self.n_layers):
+                dec = nn.RNN(cell_cls(features=feats))(dec, initial_carry=carries[layer])
+            states, new_states = enc, dec
         x = jnp.concatenate([states, new_states], axis=-2)
         x = nn.Dense(features=self.head_features)(x)
         x = nn.relu(x)
@@ -184,6 +199,7 @@ def build_network(
     preprocess_output: int = 8,
     embedding_dim: int = 8,
     head_features: int = 24,
+    rnn_layers: int = 1,
     dropout_rate: float = 0.2,
 ) -> ARModel2:
     """Build an [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] from explicit hyperparameters.
@@ -197,6 +213,7 @@ def build_network(
         preprocess_output: Output width of the preprocess stage.
         embedding_dim: Size of the per-location embedding.
         head_features: Hidden width of the output head.
+        rnn_layers: Number of stacked encoder/decoder RNN layers.
         dropout_rate: Dropout probability in the preprocess stage.
 
     Returns:
@@ -214,6 +231,7 @@ def build_network(
         cell_cls(features=rnn_features),
         cell_cls(features=rnn_features),
         head_features=head_features,
+        n_layers=rnn_layers,
     )
 
 
