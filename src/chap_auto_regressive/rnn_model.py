@@ -252,7 +252,11 @@ def build_network(
         embedding_dim: Size of the per-location embedding.
         head_features: Hidden width of the output head.
         rnn_layers: Number of stacked encoder/decoder RNN layers.
+        recursive_decode: Whether to decode the horizon one step at a time, feeding
+            each step's predicted mean back as the next step's auto-regressive input.
         dropout_rate: Dropout probability in the preprocess stage.
+        input_dropout_rate: Feature-dropout probability on the raw covariates,
+            zeroing whole feature channels (shared across location and time).
 
     Returns:
         The configured network.
