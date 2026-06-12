@@ -13,10 +13,15 @@ Array convention: ``batch x location x time x feature``.
 from typing import Any
 
 import flax.linen as nn
+import jax
 import jax.numpy as jnp
 from flax.linen import SimpleCell
 
 # Dimensions: batch_dim x location_dim x time_dim x feature_dim
+
+#: Recurrent cell types selectable by name. ``"gru"`` (gated) handles the
+#: multi-step forecast horizon markedly better than the plain ``"simple"`` RNN.
+CELL_TYPES = {"simple": SimpleCell, "gru": nn.GRUCell}
 
 
 class Preprocess(nn.Module):
@@ -41,6 +46,7 @@ class Preprocess(nn.Module):
     embedding_dim: int = 4
     output_dim: int = 1
     dropout_rate: float = 0.2
+    input_dropout_rate: float = 0.0
 
     @nn.compact
     def __call__(self, x: Any, training: bool = False) -> Any:
@@ -53,6 +59,15 @@ class Preprocess(nn.Module):
         Returns:
             The projected features, shape ``(..., locations, time, output_dim)``.
         """
+        if self.input_dropout_rate > 0.0:
+            # Feature dropout: zero entire covariate channels (one mask per feature,
+            # shared across location/time) so the network can't over-rely on any
+            # single (possibly noisy) covariate — robustness with many covariates.
+            x = nn.Dropout(
+                rate=self.input_dropout_rate,
+                broadcast_dims=tuple(range(x.ndim - 1)),
+                deterministic=not training,
+            )(x)
         n_locations = x.shape[-3]
         loc = nn.Embed(num_embeddings=n_locations, features=self.embedding_dim)(jnp.arange(n_locations))
         axis = -2
@@ -89,7 +104,9 @@ class ARAdder(nn.Module):
             Features with the lagged target appended on the feature axis.
         """
         n_y = y.shape[-1]
-        return jnp.concatenate([y[..., None], x[..., 1 : n_y + 1, :]], axis=-1)
+        # log1p the auto-regressive input so it sits on a comparable scale to the
+        # z-scored covariate features instead of swamping them with raw counts.
+        return jnp.concatenate([jnp.log1p(y)[..., None], x[..., 1 : n_y + 1, :]], axis=-1)
 
 
 class MultiValueARAdder(nn.Module):
@@ -134,6 +151,8 @@ class ARModel2(nn.Module):
         cell_post: The recurrent cell used to decode the forecast horizon.
         ar_adder: The auto-regressive join module.
         output_dim: Number of output channels per period (2 for the NB head).
+        head_features: Width of the hidden dense layer mapping the combined
+            encoder/decoder states to ``eta``.
     """
 
     preprocess: nn.Module
@@ -141,6 +160,9 @@ class ARModel2(nn.Module):
     cell_post: nn.RNNCellBase
     ar_adder: ARAdder = ARAdder()
     output_dim: int = 2
+    head_features: int = 6
+    n_layers: int = 1
+    recursive_decode: bool = False
 
     @nn.compact
     def __call__(self, x: Any, y: Any, training: bool = False) -> Any:
@@ -157,21 +179,106 @@ class ARModel2(nn.Module):
         x = self.preprocess(x, training=training)
         n_y = y.shape[-1]
         prev_x = self.ar_adder(x, y)
-        states = nn.RNN(self.cell_pre)(prev_x)
-        new_states = nn.RNN(self.cell_post)(x[..., n_y + 1 :, :], initial_carry=states[..., -1, :])
+        future_x = x[..., n_y + 1 :, :]
+        if self.recursive_decode:
+            # Decode the horizon one step at a time, feeding each step's predicted
+            # (log) mean back as the next step's auto-regressive input — the same
+            # recursion a classical AR model uses, which keeps the multi-step
+            # forecast anchored instead of drifting. Train and predict run this
+            # identically (free-running), so there is no train/predict mismatch.
+            d1, d2 = nn.Dense(self.head_features), nn.Dense(self.output_dim)
+
+            def head(h):
+                return d2(nn.relu(d1(h)))
+
+            states = nn.RNN(self.cell_pre)(prev_x)
+            ctx_eta = head(states)
+            carry = states[..., -1, :]
+            prev_val = jnp.log1p(jnp.maximum(y[..., -1:], 0.0))  # last observed (log1p)
+            etas = []
+            for t in range(future_x.shape[-2]):
+                step_in = jnp.concatenate([prev_val, future_x[..., t, :]], axis=-1)
+                carry, out = self.cell_post(carry, step_in)
+                eta_t = head(out)
+                etas.append(eta_t)
+                mean = jax.nn.softplus(eta_t[..., 0]) * jnp.exp(eta_t[..., 1])  # NB mean
+                prev_val = jnp.log1p(jnp.maximum(mean, 0.0))[..., None]
+            return jnp.concatenate([ctx_eta, jnp.stack(etas, axis=-2)], axis=-2)
+        if self.n_layers <= 1:
+            states = nn.RNN(self.cell_pre)(prev_x)
+            new_states = nn.RNN(self.cell_post)(future_x, initial_carry=states[..., -1, :])
+        else:
+            # Stacked encoder/decoder: each encoder layer's final state seeds the
+            # matching decoder layer, giving the forecast horizon more depth.
+            cell_cls, feats = type(self.cell_pre), self.cell_pre.features
+            enc, carries = prev_x, []
+            for _ in range(self.n_layers):
+                enc = nn.RNN(cell_cls(features=feats))(enc)
+                carries.append(enc[..., -1, :])
+            dec = future_x
+            for layer in range(self.n_layers):
+                dec = nn.RNN(cell_cls(features=feats))(dec, initial_carry=carries[layer])
+            states, new_states = enc, dec
         x = jnp.concatenate([states, new_states], axis=-2)
-        x = nn.Dense(features=6)(x)
+        x = nn.Dense(features=self.head_features)(x)
         x = nn.relu(x)
         x = nn.Dense(features=self.output_dim)(x)
         return x
 
 
+def build_network(
+    n_locations: int,
+    *,
+    cell: str = "gru",
+    rnn_features: int = 16,
+    preprocess_hidden: int = 16,
+    preprocess_output: int = 8,
+    embedding_dim: int = 8,
+    head_features: int = 24,
+    rnn_layers: int = 1,
+    recursive_decode: bool = False,
+    dropout_rate: float = 0.2,
+    input_dropout_rate: float = 0.0,
+) -> ARModel2:
+    """Build an [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2] from explicit hyperparameters.
+
+    Args:
+        n_locations: Number of locations (passed to the preprocess stage).
+        cell: Recurrent cell type, a key of
+            [`CELL_TYPES`][chap_auto_regressive.rnn_model.CELL_TYPES] (``"gru"`` or ``"simple"``).
+        rnn_features: Hidden width of the encoder and decoder cells.
+        preprocess_hidden: Hidden width of the per-location preprocess stack.
+        preprocess_output: Output width of the preprocess stage.
+        embedding_dim: Size of the per-location embedding.
+        head_features: Hidden width of the output head.
+        rnn_layers: Number of stacked encoder/decoder RNN layers.
+        dropout_rate: Dropout probability in the preprocess stage.
+
+    Returns:
+        The configured network.
+    """
+    cell_cls = CELL_TYPES[cell]
+    return ARModel2(
+        Preprocess(
+            n_locations=n_locations,
+            n_hidden=preprocess_hidden,
+            embedding_dim=embedding_dim,
+            output_dim=preprocess_output,
+            dropout_rate=dropout_rate,
+            input_dropout_rate=input_dropout_rate,
+        ),
+        cell_cls(features=rnn_features),
+        cell_cls(features=rnn_features),
+        head_features=head_features,
+        n_layers=rnn_layers,
+        recursive_decode=recursive_decode,
+    )
+
+
+# Back-compat: the original named factories. ``"base"`` builds the default network
+# (now GRU-based); ``"multi_value"`` swaps in the cross-location auto-regressive join.
 model_makers = {
-    "base": lambda n_locations: ARModel2(
-        Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),
-        SimpleCell(features=4),
-        SimpleCell(features=4),
-    ),
+    "base": lambda n_locations: build_network(n_locations),
     "multi_value": lambda n_locations: ARModel2(
         Preprocess(n_locations=n_locations, output_dim=2, dropout_rate=0.2),
         nn.SimpleCell(features=4),
@@ -179,9 +286,3 @@ model_makers = {
         ar_adder=MultiValueARAdder(),
     ),
 }
-"""Named factories that build a configured [`ARModel2`][chap_auto_regressive.rnn_model.ARModel2].
-
-``"base"`` uses the per-location auto-regressive join; ``"multi_value"`` swaps in
-[`MultiValueARAdder`][chap_auto_regressive.rnn_model.MultiValueARAdder] to also mix targets
-across locations. Each factory takes the number of locations and returns a model.
-"""

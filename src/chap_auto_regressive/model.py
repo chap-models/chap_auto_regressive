@@ -12,7 +12,7 @@ and time period); the model itself has no dependency on chap-core.
 """
 
 import pickle
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import jax
 import jax.numpy as jnp
@@ -22,9 +22,9 @@ import pandas as pd
 from .data_loader import DataSet as DLDataSet
 from .data_loader import SimpleDataLoader
 from .distributions import nb_head
-from .rnn_model import model_makers
+from .rnn_model import build_network
 from .trainer import Trainer
-from .transforms import ZScaler, get_series, location_groups
+from .transforms import REQUIRED_COVARIATES, ZScaler, get_series, location_groups
 
 
 def _check_predict_inputs(
@@ -123,20 +123,32 @@ class FlaxPredictor:
         self,
         params: Any,
         transform: Callable,
-        model: Any,
+        architecture: dict,
         prediction_length: int,
         context_length: int,
         locations: list | None = None,
+        covariates: Sequence[str] = REQUIRED_COVARIATES,
     ):
-        self.model = model
-        self._params = params
-        self._transform = transform
-        self.prediction_length = prediction_length
-        self.context_length = context_length
+        # The network is rebuilt from the saved architecture spec, so a loaded
+        # predictor is self-contained and does not depend on how the caller's
+        # AutoRegressiveModel happens to be configured.
+        self.architecture = dict(architecture)
         # Canonical (sorted) training locations; predictions must cover this exact
         # set because the network's per-location embeddings are indexed by sorted
         # position. None only for predictors loaded from a legacy pickle.
         self.locations = list(locations) if locations is not None else None
+        self.model = build_network(len(self.locations) if self.locations else 1, **self.architecture)
+        # Accept either a single parameter pytree or a list of them (a deep
+        # ensemble). Stored as a list; predict pools the members' samples.
+        self._params_list = params if isinstance(params, list) else [params]
+        self._params = self._params_list[0]
+        self._transform = transform
+        self.prediction_length = prediction_length
+        self.context_length = context_length
+        # The covariate columns (in order) the network was trained on; predict
+        # must build features the same way. Defaults to the required covariates
+        # for predictors loaded from a legacy pickle that predate this field.
+        self.covariates = tuple(covariates)
         self.rng_key = jax.random.PRNGKey(1234)
 
     def get_samples(self, eta: Any, n_samples: int) -> Any:
@@ -169,50 +181,75 @@ class FlaxPredictor:
             column per draw.
         """
         _check_predict_inputs(historic, future, self.prediction_length, self.context_length, self.locations)
-        x, _ = get_series(future)
-        prev_values, prev_y = get_series(historic)
+        x, _ = get_series(future, self.covariates)
+        prev_values, prev_y = get_series(historic, self.covariates)
         prev_values = prev_values[:, -self.context_length :]
         prev_y = prev_y[:, -self.context_length :]
         full_x = jnp.concatenate([prev_values, x], axis=1)
         dataset = DLDataSet(full_x, prev_y, forecast_length=self.prediction_length, context_length=self.context_length)
         dataset.set_transform(self._transform)
         x, y = dataset.prediction_instance()
-        eta = self.model.apply(self._params, x, y)
         n_prev = prev_values.shape[1]
-        samples = self.get_samples(eta[:, n_prev - 1 :], num_samples)
+        # Pool samples across the ensemble members. Each member draws an equal
+        # share of num_samples (the first members absorb the remainder) so the
+        # output keeps exactly num_samples columns.
+        n_members = len(self._params_list)
+        shares = [num_samples // n_members + (1 if k < num_samples % n_members else 0) for k in range(n_members)]
+        member_samples = []
+        for params, share in zip(self._params_list, shares):
+            if share == 0:
+                continue
+            eta = self.model.apply(params, x, y)
+            member_samples.append(np.asarray(self.get_samples(eta[:, n_prev - 1 :], share)))
+        samples = np.concatenate(member_samples, axis=-1)  # pool along the trailing sample axis
         return _forecast_frame(future, samples)
 
     def save(self, path: str) -> None:
-        """Pickle the trained parameters, feature scaler and locations to ``path``.
+        """Pickle everything needed to reload a self-contained predictor.
+
+        The payload carries the ensemble parameters, the feature scaler, the
+        training locations and covariates, **and the network architecture and
+        window lengths** — so ``load`` rebuilds the exact network without needing
+        the original model configuration.
 
         Args:
             path: Destination file path.
         """
         with open(path, "wb") as f:
-            pickle.dump((self._params, self._transform, self.locations), f)
+            pickle.dump(
+                {
+                    "params_list": self._params_list,
+                    "transform": self._transform,
+                    "locations": self.locations,
+                    "covariates": self.covariates,
+                    "architecture": self.architecture,
+                    "prediction_length": self.prediction_length,
+                    "context_length": self.context_length,
+                },
+                f,
+            )
 
     @classmethod
-    def load(cls, path: str, *args: Any, **kwargs: Any) -> "FlaxPredictor":
-        """Reload a predictor previously written by ``save``.
+    def load(cls, path: str) -> "FlaxPredictor":
+        """Reload a self-contained predictor previously written by ``save``.
 
         Args:
-            path: Path to the pickled parameters, scaler and locations.
-            *args: Forwarded to the constructor (``model``, ``prediction_length``,
-                ``context_length``).
-            **kwargs: Forwarded to the constructor.
+            path: Path to the pickled predictor.
 
         Returns:
             The reconstructed ``FlaxPredictor``.
         """
         with open(path, "rb") as f:
             payload = pickle.load(f)
-        # Predictors pickled before locations were tracked hold a 2-tuple.
-        if len(payload) == 2:
-            params, transform = payload
-            locations = None
-        else:
-            params, transform, locations = payload
-        return cls(params, transform, *args, locations=locations, **kwargs)
+        return cls(
+            payload["params_list"],
+            payload["transform"],
+            payload["architecture"],
+            payload["prediction_length"],
+            payload["context_length"],
+            locations=payload.get("locations"),
+            covariates=payload.get("covariates", REQUIRED_COVARIATES),
+        )
 
 
 class AutoRegressiveModel:
@@ -226,23 +263,48 @@ class AutoRegressiveModel:
 
     All input/output is via tidy :class:`pandas.DataFrame` objects with the columns
     ``location``, ``time_period``, ``rainfall``, ``mean_temperature``,
-    ``population`` and (for training) ``disease_cases``.
+    ``population`` and (for training) ``disease_cases``. Listing extra column
+    names in ``additional_covariates`` feeds them to the network as further
+    features, on top of the always-present required three.
+
+    The defaults are the tuned configuration: a GRU encoder/decoder, a 3-year
+    context, and a 5-member deep ensemble.
 
     Attributes:
-        rnn_model_name: Which [`model_makers`][chap_auto_regressive.rnn_model.model_makers]
-            architecture to build (``"base"`` or ``"multi_value"``).
         prediction_length: Number of periods to forecast ahead.
-        n_iter: Number of training epochs.
+        n_iter: Number of training epochs (per ensemble member).
         context_length: Number of past periods read as context.
         learning_rate: Adam learning rate.
+        n_ensemble: Independently seeded models to train and pool at predict time
+            (a deep ensemble; improves predictive calibration / CRPS).
+        additional_covariates: Extra covariate columns to use as features,
+            appended after the required ``rainfall``, ``mean_temperature`` and
+            ``population``. Empty by default.
+        cell: Recurrent cell type (``"gru"`` or ``"simple"``).
+        rnn_features: Hidden width of the encoder/decoder cells.
+        preprocess_hidden / preprocess_output / embedding_dim / head_features:
+            Network layer widths.
         distribution_head: Maps the network output to the sampling distribution.
     """
 
-    rnn_model_name = "base"
+    # --- training ---
     prediction_length = 3
-    n_iter: int = 1000
-    context_length = 24
-    learning_rate = 1e-4
+    n_iter: int = 400
+    context_length = 36
+    learning_rate = 1e-3
+    n_ensemble: int = 5
+    additional_covariates: Sequence[str] = ()
+    # --- network architecture (persisted in the saved predictor) ---
+    cell: str = "gru"
+    rnn_features: int = 16
+    preprocess_hidden: int = 16
+    preprocess_output: int = 8
+    embedding_dim: int = 8
+    head_features: int = 24
+    rnn_layers: int = 1
+    recursive_decode: bool = False
+    dropout_rate: float = 0.2
+    input_dropout_rate: float = 0.0
     distribution_head = staticmethod(nb_head)
 
     def __init__(self, rng_key=jax.random.PRNGKey(100)):
@@ -254,6 +316,32 @@ class AutoRegressiveModel:
         self._locations: list | None = None
         self._validation_locations: list | None = None
 
+    @property
+    def covariates(self) -> tuple[str, ...]:
+        """The feature covariates in order: the required three then any extras.
+
+        Additional covariates that duplicate a required one are ignored, so the
+        required covariates always lead exactly once.
+        """
+        extra = tuple(c for c in self.additional_covariates if c not in REQUIRED_COVARIATES)
+        return REQUIRED_COVARIATES + extra
+
+    @property
+    def architecture(self) -> dict:
+        """The network hyperparameters, persisted so predict rebuilds the same net."""
+        return {
+            "cell": self.cell,
+            "rnn_features": self.rnn_features,
+            "preprocess_hidden": self.preprocess_hidden,
+            "preprocess_output": self.preprocess_output,
+            "embedding_dim": self.embedding_dim,
+            "head_features": self.head_features,
+            "rnn_layers": self.rnn_layers,
+            "recursive_decode": self.recursive_decode,
+            "dropout_rate": self.dropout_rate,
+            "input_dropout_rate": self.input_dropout_rate,
+        }
+
     def set_model(self, model: Any) -> None:
         """Override the network instance instead of building one lazily.
 
@@ -264,14 +352,14 @@ class AutoRegressiveModel:
 
     @property
     def model(self) -> Any:
-        """The flax network, built lazily from ``rnn_model_name`` on first access."""
+        """The flax network, built lazily from the architecture on first access."""
         if self._model is None:
-            self._model = model_makers[self.rnn_model_name](self._n_locations)
+            self._model = build_network(self._n_locations, **self.architecture)
         return self._model
 
     def _get_dataset(self, data: pd.DataFrame) -> DLDataSet:
         """Build a windowed dataset from the input frame."""
-        x, y = get_series(data)
+        x, y = get_series(data, self.covariates)
         return DLDataSet(x, y, forecast_length=self.prediction_length, context_length=self.context_length)
 
     def set_validation_data(self, historic: pd.DataFrame, future: pd.DataFrame) -> None:
@@ -302,10 +390,10 @@ class AutoRegressiveModel:
         if set(historic["location"].unique()) != set(future["location"].unique()):
             raise ValueError("validation historic and future must cover the same set of locations")
         self._validation_locations = sorted(historic["location"].unique())
-        x, y = get_series(historic)
+        x, y = get_series(historic, self.covariates)
         x = x[:, -self.context_length :]
         y = y[:, -self.context_length :]
-        fx, fy = get_series(future)
+        fx, fy = get_series(future, self.covariates)
         full_x = np.concatenate([x, fx], axis=1)
         full_y = np.concatenate([y, fy], axis=1)
         self._validation_loader = SimpleDataLoader(
@@ -343,22 +431,29 @@ class AutoRegressiveModel:
             self._validation_loader.dataset.set_transform(self._transform)
         self._n_locations = data["location"].nunique()
         data_loader = SimpleDataLoader(data_set)
-        trainer = Trainer(
-            self.model, self.n_iter, learning_rate=self.learning_rate, validation_loader=self._validation_loader
-        )
-        state = trainer.train(data_loader, self._loss)
-        self._params = state.params
+        params_list = []
+        for member in range(max(1, self.n_ensemble)):
+            trainer = Trainer(
+                self.model,
+                self.n_iter,
+                learning_rate=self.learning_rate,
+                validation_loader=self._validation_loader,
+                seed=member,
+            )
+            params_list.append(trainer.train(data_loader, self._loss).params)
+        self._params = params_list[0]
         return FlaxPredictor(
-            self._params,
+            params_list,
             self._transform,
-            self.model,
+            self.architecture,
             self.prediction_length,
             self.context_length,
             locations=self._locations,
+            covariates=self.covariates,
         )
 
     def load_predictor(self, path: str) -> FlaxPredictor:
-        """Load a saved predictor, attaching this model's architecture and lengths.
+        """Load a saved predictor. Self-contained — rebuilt entirely from the file.
 
         Args:
             path: Path to a file written by
@@ -367,7 +462,7 @@ class AutoRegressiveModel:
         Returns:
             The reconstructed [`FlaxPredictor`][chap_auto_regressive.model.FlaxPredictor].
         """
-        return FlaxPredictor.load(path, self.model, self.prediction_length, self.context_length)
+        return FlaxPredictor.load(path)
 
     def predict(self, historic: pd.DataFrame, future: pd.DataFrame, num_samples: int = 100) -> pd.DataFrame:
         """Forecast the future periods directly from this (trained) model.
@@ -412,11 +507,15 @@ class AutoRegressiveModel:
         return -self.distribution_head(eta_pred).log_prob(y_true[..., 1:])
 
     def _loss(self, y_pred: Any, y_true: Any) -> Any:
-        """Aggregate the per-period loss, emphasizing the forecast horizon."""
+        """Aggregate the per-period loss over the whole window, emphasizing the horizon.
+
+        Training on every period (not just the forecast horizon) gives the
+        auto-regressive encoder one-step-ahead supervision across the whole
+        context, which is far more signal than the 3 horizon periods alone; the
+        extra horizon term keeps the forecast region weighted up.
+        """
         L = self.loss_func(y_pred, y_true)
-        return jnp.mean(L[:, -self.prediction_length :]) / self.context_length + jnp.mean(
-            L[:, -self.prediction_length :]
-        )
+        return jnp.mean(L) + jnp.mean(L[:, -self.prediction_length :])
 
     def get_samples(self, eta: Any, n_samples: int) -> Any:
         """Draw samples from the output distribution for each period.

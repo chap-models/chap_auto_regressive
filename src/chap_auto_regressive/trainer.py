@@ -61,6 +61,7 @@ class Trainer:
         n_iter: int = 3000,
         learning_rate: float = 1e-5,
         validation_loader: Optional[DataLoader] = None,
+        seed: int = 0,
     ):
         """Configure the trainer.
 
@@ -70,11 +71,14 @@ class Trainer:
             learning_rate: Adam learning rate.
             validation_loader: Optional loader providing a held-out window for
                 periodic validation-loss reporting.
+            seed: Seed for parameter initialization and dropout, so independently
+                seeded trainers yield distinct ensemble members.
         """
         self.model = model
         self.n_iter = n_iter
         self.learning_rate = learning_rate
         self._validation_loader = validation_loader
+        self.seed = seed
 
     def train(self, data_loader: DataLoader, loss_fn: Callable) -> "TrainState":
         """Train the model and return the final state.
@@ -94,8 +98,8 @@ class Trainer:
             trained parameters.
         """
         ix, iar_y, iy = peekable(iter(data_loader)).peek()
-        params = self.model.init(jax.random.PRNGKey(0), ix, iar_y, training=False)
-        dropout_key = jax.random.PRNGKey(40)
+        params = self.model.init(jax.random.PRNGKey(self.seed), ix, iar_y, training=False)
+        dropout_key = jax.random.PRNGKey(self.seed + 40)
 
         training_state = TrainState.create(
             apply_fn=self.model.apply, params=params, tx=optax.adam(self.learning_rate), key=dropout_key

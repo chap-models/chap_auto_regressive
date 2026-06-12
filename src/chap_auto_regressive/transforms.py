@@ -13,10 +13,14 @@ location and time period and the columns ``location``, ``time_period``,
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 import numpy as np
 import pandas as pd
+
+#: The covariates every configuration must provide. They are always the leading
+#: features, in this order; additional covariates are appended after them.
+REQUIRED_COVARIATES: tuple[str, ...] = ("rainfall", "mean_temperature", "population")
 
 
 @dataclass
@@ -92,51 +96,60 @@ def location_groups(data: pd.DataFrame) -> Iterator[tuple[Any, pd.DataFrame]]:
         yield location, sub.sort_values("time_period")
 
 
-def get_series(data: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def get_series(data: pd.DataFrame, covariates: Sequence[str] = REQUIRED_COVARIATES) -> tuple[np.ndarray, np.ndarray]:
     """Extract dense feature and target arrays from the input frame.
 
-    For every location the function stacks four features per period — rainfall,
-    mean temperature, population, and the day-of-year position — into a
-    ``(periods, features)`` matrix, and collects the observed ``disease_cases``
-    as the target when the column is present.
+    For every location the function stacks one feature per ``covariates`` column
+    (rainfall, mean temperature and population by default), followed by the
+    day-of-year position, into a ``(periods, features)`` matrix, and collects the
+    observed ``disease_cases`` as the target when the column is present. Passing
+    extra names in ``covariates`` simply appends them as additional features; the
+    network infers its input width from the data, so no other change is needed.
 
     Args:
         data: A tidy frame with one row per location and time period.
+        covariates: The covariate columns to use as features, in order. Defaults
+            to the three required covariates; additional names are appended after
+            them (the ``year_position`` feature always comes last).
 
     Returns:
-        A ``(x, y)`` tuple where ``x`` has shape ``(locations, periods, 4)`` and
-        ``y`` has shape ``(locations, periods)``. ``y`` is empty when the frame
-        carries no ``disease_cases`` column (i.e. future data).
+        A ``(x, y)`` tuple where ``x`` has shape
+        ``(locations, periods, len(covariates) + 1)`` and ``y`` has shape
+        ``(locations, periods)``. ``y`` is empty when the frame carries no
+        ``disease_cases`` column (i.e. future data).
 
     Raises:
-        ValueError: If the locations do not all share the same number of periods
-            (the dense array is rectangular by construction), or if any feature
-            value is NaN.
+        ValueError: If a requested covariate column is missing, if the locations
+            do not all share the same number of periods (the dense array is
+            rectangular by construction), or if any feature value is NaN.
     """
     has_target = "disease_cases" in data.columns
+    missing = [c for c in covariates if c not in data.columns]
+    if missing:
+        raise ValueError(f"missing covariate column(s) {missing}; available columns: {list(data.columns)}")
     xs = []
     ys = []
     counts = {}
     for location, sub in location_groups(data):
         counts[location] = len(sub)
-        year_position = [year_position_from_period(period) for period in sub["time_period"]]
-        xs.append(
-            np.array(
-                (
-                    sub["rainfall"].to_numpy(),
-                    sub["mean_temperature"].to_numpy(),
-                    sub["population"].to_numpy(),
-                    year_position,
-                )
-            ).T
-        )
+        yp = np.asarray([year_position_from_period(period) for period in sub["time_period"]])
+        features = [sub[name].to_numpy() for name in covariates]
+        # Seasonal calendar features: the year-position ramp plus the first two
+        # Fourier harmonics, which give the network a smooth, periodic seasonal
+        # signal (a single ramp cannot express the seasonal shape on its own).
+        features.append(yp)
+        features.append(np.sin(2 * np.pi * yp))
+        features.append(np.cos(2 * np.pi * yp))
+        features.append(np.sin(4 * np.pi * yp))
+        features.append(np.cos(4 * np.pi * yp))
+        xs.append(np.array(features).T)
         if has_target:
             ys.append(sub["disease_cases"].to_numpy())
     if len(set(counts.values())) > 1:
         raise ValueError(f"every location must have the same number of periods, but the period counts differ: {counts}")
     x = np.array(xs)
     if np.any(np.isnan(x)):
-        raise ValueError("input features contain NaN values (rainfall, mean_temperature or population)")
+        raise ValueError(f"input features contain NaN values (one of {tuple(covariates)})")
     return x, np.array(ys)
 
 
