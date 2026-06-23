@@ -1,10 +1,15 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from chap_auto_regressive.data_loader import DataSet, SimpleDataLoader
-from chap_auto_regressive.rnn_model import model_makers
+from chap_auto_regressive.rnn_model import build_network, model_makers
 from chap_auto_regressive.trainer import Trainer
+
+
+def _param_count(params) -> int:
+    return sum(a.size for a in jax.tree_util.tree_leaves(params))
 
 
 def _toy_loader(n_loc=2, n_periods=12, n_feat=4, seed=0):
@@ -22,6 +27,25 @@ def test_network_forward_produces_two_finite_channels():
     eta = np.asarray(model.apply(params, x, ar_y))
     assert eta.shape[-1] == 2
     assert np.isfinite(eta).all()
+
+
+@pytest.mark.parametrize("recursive_decode", [True, False])
+def test_rnn_layers_adds_parameters(recursive_decode):
+    """rnn_layers must stack real layers in both decode paths.
+
+    Regression test: the recursive_decode branch previously ignored n_layers, so
+    rnn_layers=2 trained a network identical to rnn_layers=1.
+    """
+    loader = _toy_loader()
+    x, ar_y, _ = next(iter(loader))
+    key = jax.random.PRNGKey(0)
+
+    def count(n_layers):
+        net = build_network(x.shape[0], rnn_layers=n_layers, recursive_decode=recursive_decode)
+        return _param_count(net.init(key, x, ar_y, training=False))
+
+    one, two, three = count(1), count(2), count(3)
+    assert one < two < three, f"rnn_layers had no effect: {(one, two, three)}"
 
 
 def test_trainer_runs_a_couple_of_steps():
