@@ -181,15 +181,35 @@ class ARModel2(nn.Module):
             def head(h):
                 return d2(nn.relu(d1(h)))
 
-            states = nn.RNN(self.cell_pre)(prev_x)
-            ctx_eta = head(states)
-            carry = states[..., -1, :]
             prev_val = jnp.log1p(jnp.maximum(y[..., -1:], 0.0))  # last observed (log1p)
+            if self.n_layers <= 1:
+                # Single layer: encode the context with one RNN, decode the
+                # horizon with one cell (unchanged from the original behaviour).
+                states = nn.RNN(self.cell_pre)(prev_x)
+                ctx_eta = head(states)
+                carries = [states[..., -1, :]]
+                dec_cells: list[nn.RNNCellBase] = [self.cell_post]
+            else:
+                # Stacked recursive decode: encode the context with n_layers
+                # stacked RNNs (each layer's final state seeds the matching
+                # decoder cell), then roll the horizon forward one step at a time
+                # through the whole decoder stack. Mirrors the n_layers branch of
+                # the non-recursive path, but keeps the step-by-step feedback loop.
+                cell_cls, feats = type(self.cell_pre), self.cell_pre.features
+                enc, carries = prev_x, []
+                for _ in range(self.n_layers):
+                    enc = nn.RNN(cell_cls(features=feats))(enc)
+                    carries.append(enc[..., -1, :])
+                ctx_eta = head(enc)
+                dec_cells = [cell_cls(features=feats) for _ in range(self.n_layers)]
             etas = []
             for t in range(future_x.shape[-2]):
-                step_in = jnp.concatenate([prev_val, future_x[..., t, :]], axis=-1)
-                carry, out = self.cell_post(carry, step_in)
-                eta_t = head(out)
+                # The bottom decoder cell sees the fed-back prediction; each higher
+                # cell consumes the cell below it. Carries thread across horizon steps.
+                layer_in = jnp.concatenate([prev_val, future_x[..., t, :]], axis=-1)
+                for layer, cell in enumerate(dec_cells):
+                    carries[layer], layer_in = cell(carries[layer], layer_in)
+                eta_t = head(layer_in)
                 etas.append(eta_t)
                 mean = jax.nn.softplus(eta_t[..., 0]) * jnp.exp(eta_t[..., 1])  # NB mean
                 prev_val = jnp.log1p(jnp.maximum(mean, 0.0))[..., None]
