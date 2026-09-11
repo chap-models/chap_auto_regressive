@@ -65,7 +65,8 @@ def test_too_short_a_series_raises_rather_than_falling_back():
     model._locations = ["loc0", "loc1", "loc2"]
     model._n_locations = 3
     total_length = model.context_length + model.prediction_length
-    minimum = total_length + model.validation_periods + total_length
+    # Held-out block, plus enough left for the probe to get min_probe_windows.
+    minimum = (total_length + model.validation_periods) + total_length + model.min_probe_windows - 1
 
     model._early_stopping_loaders(_frame(minimum))  # exactly enough: fine
 
@@ -122,3 +123,74 @@ def test_trainer_without_validation_keeps_the_final_state():
     trainer = Trainer(model=None, n_iter=3)
     assert trainer.best_epoch is None
     assert trainer.patience == 6
+
+
+def test_refit_budget_is_computed_in_steps_under_both_scalings():
+    """The hand-off must be a step budget, however it is scaled.
+
+    The probe runs over the pre-split prefix and the refit over the whole frame,
+    so the loaders hold different numbers of windows and an epoch index means
+    different amounts of training in each. Under ``"steps"`` the refit gets the
+    probe's step count unchanged; under ``"epochs"`` it gets that count scaled by
+    the window ratio, i.e. the same number of passes. Either way the budget the
+    refit enforces is expressed in steps, so it never depends on which loader it
+    happens to be iterating.
+    """
+    import chap_auto_regressive.model as model_module
+
+    def run(scaling):
+        model = _model(refit_scaling=scaling)
+        model.validation_periods = 4
+        records = []
+        original = model_module.Trainer
+
+        class Recording(original):
+            def train(self, loader, loss_fn):
+                state = super().train(loader, loss_fn)
+                records.append(
+                    {
+                        "phase": "probe" if self._validation_loader is not None else "refit",
+                        "windows": len(list(iter(loader))),
+                        "final_step": int(state.step),
+                        "best_step": self.best_step,
+                        "max_steps": self.max_steps,
+                    }
+                )
+                return state
+
+        model_module.Trainer = Recording
+        try:
+            model.train(_frame(60))
+        finally:
+            model_module.Trainer = original
+        return records[0], records[1]
+
+    probe, refit = run("steps")
+    assert probe["windows"] < refit["windows"], "the probe should see fewer windows than the refit"
+    assert refit["max_steps"] == probe["best_step"]
+    assert refit["final_step"] == probe["best_step"]
+
+    probe, refit = run("epochs")
+    expected = round(probe["best_step"] * refit["windows"] / probe["windows"])
+    assert refit["max_steps"] == expected
+    assert refit["final_step"] == expected
+
+
+def test_unknown_refit_scaling_is_rejected():
+    """A typo in the option must fail loudly rather than silently pick a default."""
+    model = _model(refit_scaling="per-epoch")
+    with pytest.raises(ValueError, match="refit_scaling"):
+        model.train(_frame(60))
+
+
+def test_a_probe_with_too_few_windows_is_rejected():
+    """One probe window clears a length check but cannot locate a minimum."""
+    model = _model()
+    model.context_length = 16
+    model.prediction_length = 3
+    model.validation_periods = 8
+    model.min_probe_windows = 5
+    model._locations, model._n_locations = ["loc0", "loc1", "loc2"], 3
+
+    with pytest.raises(ValueError, match="windows"):
+        model._early_stopping_loaders(_frame(46))

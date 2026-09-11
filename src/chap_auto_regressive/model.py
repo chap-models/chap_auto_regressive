@@ -313,6 +313,18 @@ class AutoRegressiveModel:
     #: contain, so the block spans ``context_length + prediction_length +
     #: validation_periods`` periods and yields ``validation_periods + 1`` windows.
     validation_periods: int = 12
+    #: Windows the probe must have to be able to locate a loss minimum. One
+    #: window passes a length check but makes the probe meaningless, so this is a
+    #: floor on usefulness rather than on arithmetic.
+    min_probe_windows: int = 5
+    #: How the probe's stopping point is carried over to the refit. ``"steps"``
+    #: gives the refit the same number of gradient steps; ``"epochs"`` gives it
+    #: the same number of passes over its own windows, which is more steps in
+    #: proportion to the extra data it has. Neither is obviously right -- a larger
+    #: training set supports more updates before it overfits, which argues for
+    #: ``"epochs"``, but the ratio is unbounded, which argues for ``"steps"``.
+    #: Chosen empirically; see the tests and the PR discussion.
+    refit_scaling: str = "epochs"
     patience: int = 6
     eval_every: int = 5
     additional_covariates: Sequence[str] = ()
@@ -430,13 +442,22 @@ class AutoRegressiveModel:
         the earlier part only. Returns ``None`` when early stopping is switched
         off or when the caller supplied its own validation window.
 
-        A window spans ``context_length + prediction_length`` periods, and both
-        sides of the split need at least one, so early stopping needs at least
-        twice that many periods -- 78 months at the default 36 + 3. Too short a
-        series raises rather than falling back to fixed-length training: the
-        fallback is the overtraining this feature exists to prevent, and it would
-        happen silently, since chap runs training in a subprocess whose logs the
-        caller never sees.
+        A window spans ``context_length + prediction_length`` periods. The
+        held-out block needs one plus ``validation_periods``, and the fit side
+        needs at least ``min_probe_windows`` of them, so the series must hold
+        ``2 * (context_length + prediction_length) + validation_periods +
+        min_probe_windows - 1`` periods -- 94 at the default 36 + 3 + 12 + 5.
+
+        Too short a series raises rather than falling back to fixed-length
+        training: the fallback is the overtraining this feature exists to
+        prevent, and it would happen silently, since chap runs training in a
+        subprocess whose logs the caller never sees.
+
+        The probe-window floor matters as much as the total length. One window
+        clears a naive length check but cannot locate a loss minimum -- the probe
+        would evaluate ``patience`` times against a single fixed slice of history
+        -- so lowering ``validation_periods`` until the error goes away would buy
+        a fit that is worse than not using early stopping at all.
 
         Args:
             data: The training frame.
@@ -456,13 +477,17 @@ class AutoRegressiveModel:
         # setting rather than being swallowed by a max() against the window size.
         n_validation = total_length + max(self.validation_periods, 0)
         split = x.shape[1] - n_validation
-        if split < total_length:
+        probe_windows = split - total_length + 1
+        if probe_windows < self.min_probe_windows:
+            needed = n_validation + total_length + self.min_probe_windows - 1
             raise ValueError(
-                f"early stopping needs at least {n_validation + total_length} periods "
-                f"(a {total_length}-period window to train on and {n_validation} held out), "
-                f"but the shortest series has {x.shape[1]}. Either shorten context_length, "
-                f"lower validation_periods (currently {self.validation_periods}), or set "
-                f"early_stopping=False to train for a fixed n_iter={self.n_iter}."
+                f"early stopping needs at least {needed} periods "
+                f"({n_validation} held out, and enough left to give the probe "
+                f"{self.min_probe_windows} windows), but the shortest series has {x.shape[1]} "
+                f"and would give the probe {max(probe_windows, 0)}. Either shorten "
+                f"context_length (currently {self.context_length}), lower validation_periods "
+                f"(currently {self.validation_periods}), or set early_stopping=False to train "
+                f"for a fixed n_iter={self.n_iter}."
             )
         fit_set = DLDataSet(
             x[:, :split], y[:, :split], forecast_length=self.prediction_length, context_length=self.context_length
@@ -511,6 +536,7 @@ class AutoRegressiveModel:
         for member in range(max(1, self.n_ensemble)):
             seed = self.seed_offset + member
             n_iter = self.n_iter
+            max_steps = None
             if early_stopping_loaders is not None:
                 fit_loader, validation_loader = early_stopping_loaders
                 probe = Trainer(
@@ -523,12 +549,28 @@ class AutoRegressiveModel:
                     patience=self.patience,
                 )
                 probe.train(fit_loader, self._loss)
-                n_iter = max(probe.best_epoch or 0, 1)
+                # Carry the budget across as gradient *steps*, not epochs. The
+                # probe runs over the pre-split prefix and the refit over the
+                # whole frame, so an epoch is a different amount of training in
+                # each -- by 4x at the shortest supported series, and far more
+                # once context_length is tuned down. Passing the epoch index
+                # would silently reinstate the overtraining this prevents.
+                max_steps = max(probe.best_step or 0, 1)
+                if self.refit_scaling == "epochs":
+                    # Same number of passes over the data, which is more gradient
+                    # steps in proportion to the refit's extra windows.
+                    ratio = len(data_set) / max(len(fit_loader.dataset), 1)
+                    max_steps = max(int(round(max_steps * ratio)), 1)
+                elif self.refit_scaling != "steps":
+                    raise ValueError(f"refit_scaling must be 'steps' or 'epochs', got {self.refit_scaling!r}")
                 logger.info(
-                    "member %d: best validation loss %.4f at epoch %d; refitting on the full series",
+                    "member %d: best validation loss %.4f at epoch %d; refitting on the full "
+                    "series for %d steps (%s scaling)",
                     member,
                     probe.best_validation_loss,
-                    n_iter,
+                    probe.best_epoch,
+                    max_steps,
+                    self.refit_scaling,
                 )
             trainer = Trainer(
                 self.model,
@@ -538,6 +580,7 @@ class AutoRegressiveModel:
                 seed=seed,
                 eval_every=self.eval_every,
                 patience=self.patience,
+                max_steps=max_steps,
             )
             params_list.append(trainer.train(data_loader, self._loss).params)
         self._params = params_list[0]

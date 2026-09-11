@@ -64,6 +64,7 @@ class Trainer:
         seed: int = 0,
         eval_every: int = 5,
         patience: int = 6,
+        max_steps: int | None = None,
     ):
         """Configure the trainer.
 
@@ -80,6 +81,11 @@ class Trainer:
                 best validation loss. Only active when a validation loader is
                 supplied; ``0`` disables stopping and restores the previous
                 fixed-length behaviour.
+            max_steps: Stop after this many gradient steps, regardless of epoch
+                boundaries. A step budget is the portable unit between two
+                loaders: an epoch is a pass over whichever windows the loader
+                holds, so the same epoch count means different amounts of
+                training on datasets of different length.
         """
         self.model = model
         self.n_iter = n_iter
@@ -88,8 +94,13 @@ class Trainer:
         self.seed = seed
         self.eval_every = eval_every
         self.patience = patience
+        self.max_steps = max_steps
         #: Epoch at which the best validation loss was seen, set by ``train``.
         self.best_epoch: Optional[int] = None
+        #: Gradient steps taken to reach the best validation loss, set by
+        #: ``train``. This, not ``best_epoch``, is what transfers to a run over a
+        #: different set of windows.
+        self.best_step: Optional[int] = None
         #: The best validation loss seen, set by ``train``.
         self.best_validation_loss: Optional[float] = None
 
@@ -144,7 +155,12 @@ class Trainer:
         best_state, best_loss, best_epoch, since_best = training_state, float("inf"), 0, 0
         for i in range(self.n_iter):
             for x, ar_y, y in iter(data_loader):
+                if self.max_steps is not None and int(training_state.step) >= self.max_steps:
+                    break
                 training_state, cur_loss = train_step(training_state, dropout_key, x, ar_y, y)
+            if self.max_steps is not None and int(training_state.step) >= self.max_steps:
+                logger.info("reached the %d-step budget at epoch %d", self.max_steps, i)
+                break
             if self._validation_loader is None:
                 if i % 10 == 0:
                     logger.info("epoch %d: loss=%s", i, cur_loss)
@@ -167,4 +183,5 @@ class Trainer:
         if self._validation_loader is None:
             return training_state
         self.best_epoch, self.best_validation_loss = best_epoch, best_loss
+        self.best_step = int(best_state.step)
         return best_state
