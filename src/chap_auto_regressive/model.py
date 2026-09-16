@@ -11,6 +11,7 @@ The public API speaks tidy :class:`pandas.DataFrame` objects (one row per locati
 and time period); the model itself has no dependency on chap-core.
 """
 
+import logging
 import pickle
 from typing import Any, Callable, Sequence
 
@@ -25,6 +26,8 @@ from .distributions import nb_head
 from .rnn_model import build_network
 from .trainer import Trainer
 from .transforms import REQUIRED_COVARIATES, ZScaler, get_series, location_groups
+
+logger = logging.getLogger(__name__)
 
 
 def _check_predict_inputs(
@@ -293,6 +296,37 @@ class AutoRegressiveModel:
     context_length = 36
     learning_rate = 1e-3
     n_ensemble: int = 5
+    # Offsets every ensemble member's seed. The model is otherwise fully
+    # deterministic, so without this two runs of the same configuration are
+    # bit-identical and the seed variance -- the noise floor any change has to
+    # clear -- cannot be measured at all.
+    seed_offset: int = 0
+    # --- early stopping ---
+    # Held-out loss on these series bottoms out around epoch 30 and then climbs
+    # for the remaining 370, so training to a fixed n_iter costs 1.3-2.5 nats.
+    # Each member first fits on all but the held-out tail to find its own best
+    # epoch, then refits on the full series for that many epochs -- so no data is
+    # permanently given up, and the usual run is several times cheaper than the
+    # fixed-length one it replaces.
+    early_stopping: bool = True
+    #: Extra periods the held-out block gets on top of the one window it must
+    #: contain, so the block spans ``context_length + prediction_length +
+    #: validation_periods`` periods and yields ``validation_periods + 1`` windows.
+    validation_periods: int = 12
+    #: Windows the probe must have to be able to locate a loss minimum. One
+    #: window passes a length check but makes the probe meaningless, so this is a
+    #: floor on usefulness rather than on arithmetic.
+    min_probe_windows: int = 5
+    #: How the probe's stopping point is carried over to the refit. ``"steps"``
+    #: gives the refit the same number of gradient steps; ``"epochs"`` gives it
+    #: the same number of passes over its own windows, which is more steps in
+    #: proportion to the extra data it has. Neither is obviously right -- a larger
+    #: training set supports more updates before it overfits, which argues for
+    #: ``"epochs"``, but the ratio is unbounded, which argues for ``"steps"``.
+    #: Chosen empirically; see the tests and the PR discussion.
+    refit_scaling: str = "epochs"
+    patience: int = 6
+    eval_every: int = 5
     additional_covariates: Sequence[str] = ()
     # --- network architecture (persisted in the saved predictor) ---
     cell: str = "gru"
@@ -400,6 +434,72 @@ class AutoRegressiveModel:
             DLDataSet(full_x, full_y, forecast_length=self.prediction_length, context_length=self.context_length)
         )
 
+    def _early_stopping_loaders(self, data: pd.DataFrame) -> tuple | None:
+        """Split the tail off the training series to select a stopping epoch.
+
+        The split is contiguous and final in time -- a random split would let the
+        auto-regressive input see the future -- and the feature scaler is fitted on
+        the earlier part only. Returns ``None`` when early stopping is switched
+        off or when the caller supplied its own validation window.
+
+        A window spans ``context_length + prediction_length`` periods. The
+        held-out block needs one plus ``validation_periods``, and the fit side
+        needs at least ``min_probe_windows`` of them, so the series must hold
+        ``2 * (context_length + prediction_length) + validation_periods +
+        min_probe_windows - 1`` periods -- 94 at the default 36 + 3 + 12 + 5.
+
+        Too short a series raises rather than falling back to fixed-length
+        training: the fallback is the overtraining this feature exists to
+        prevent, and it would happen silently, since chap runs training in a
+        subprocess whose logs the caller never sees.
+
+        The probe-window floor matters as much as the total length. One window
+        clears a naive length check but cannot locate a loss minimum -- the probe
+        would evaluate ``patience`` times against a single fixed slice of history
+        -- so lowering ``validation_periods`` until the error goes away would buy
+        a fit that is worse than not using early stopping at all.
+
+        Args:
+            data: The training frame.
+
+        Raises:
+            ValueError: If the series is too short to hold out a validation window.
+
+        Returns:
+            A ``(fit_loader, validation_loader)`` pair, or ``None``.
+        """
+        if not self.early_stopping or self._validation_loader is not None:
+            return None
+        x, y = get_series(data, self.covariates)
+        total_length = self.context_length + self.prediction_length
+        # validation_periods is the *extra* history the held-out block gets beyond
+        # the single window it must contain, so the knob has an effect at every
+        # setting rather than being swallowed by a max() against the window size.
+        n_validation = total_length + max(self.validation_periods, 0)
+        split = x.shape[1] - n_validation
+        probe_windows = split - total_length + 1
+        if probe_windows < self.min_probe_windows:
+            needed = n_validation + total_length + self.min_probe_windows - 1
+            raise ValueError(
+                f"early stopping needs at least {needed} periods "
+                f"({n_validation} held out, and enough left to give the probe "
+                f"{self.min_probe_windows} windows), but the shortest series has {x.shape[1]} "
+                f"and would give the probe {max(probe_windows, 0)}. Either shorten "
+                f"context_length (currently {self.context_length}), lower validation_periods "
+                f"(currently {self.validation_periods}), or set early_stopping=False to train "
+                f"for a fixed n_iter={self.n_iter}."
+            )
+        fit_set = DLDataSet(
+            x[:, :split], y[:, :split], forecast_length=self.prediction_length, context_length=self.context_length
+        )
+        scaler = ZScaler.from_data(fit_set)
+        fit_set.set_transform(scaler)
+        validation_set = DLDataSet(
+            x[:, split:], y[:, split:], forecast_length=self.prediction_length, context_length=self.context_length
+        )
+        validation_set.set_transform(scaler)
+        return SimpleDataLoader(fit_set), SimpleDataLoader(validation_set)
+
     def train(self, data: pd.DataFrame) -> FlaxPredictor:
         """Fit the model and return a predictor.
 
@@ -416,9 +516,11 @@ class AutoRegressiveModel:
             parameters and the fitted scaler.
         """
         self._locations = sorted(data["location"].unique())
+        self._n_locations = data["location"].nunique()
         data_set = self._get_dataset(data)
         self._transform = ZScaler.from_data(data_set)
         data_set.set_transform(self._transform)
+        early_stopping_loaders = self._early_stopping_loaders(data)
         # Standardize the validation window with the same fitted scaler, otherwise
         # its features stay on the raw scale and the reported validation loss is
         # not comparable to the training loss.
@@ -429,16 +531,56 @@ class AutoRegressiveModel:
                     f"{self._locations}, but got {self._validation_locations}"
                 )
             self._validation_loader.dataset.set_transform(self._transform)
-        self._n_locations = data["location"].nunique()
         data_loader = SimpleDataLoader(data_set)
         params_list = []
         for member in range(max(1, self.n_ensemble)):
+            seed = self.seed_offset + member
+            n_iter = self.n_iter
+            max_steps = None
+            if early_stopping_loaders is not None:
+                fit_loader, validation_loader = early_stopping_loaders
+                probe = Trainer(
+                    self.model,
+                    self.n_iter,
+                    learning_rate=self.learning_rate,
+                    validation_loader=validation_loader,
+                    seed=seed,
+                    eval_every=self.eval_every,
+                    patience=self.patience,
+                )
+                probe.train(fit_loader, self._loss)
+                # Carry the budget across as gradient *steps*, not epochs. The
+                # probe runs over the pre-split prefix and the refit over the
+                # whole frame, so an epoch is a different amount of training in
+                # each -- by 4x at the shortest supported series, and far more
+                # once context_length is tuned down. Passing the epoch index
+                # would silently reinstate the overtraining this prevents.
+                max_steps = max(probe.best_step or 0, 1)
+                if self.refit_scaling == "epochs":
+                    # Same number of passes over the data, which is more gradient
+                    # steps in proportion to the refit's extra windows.
+                    ratio = len(data_set) / max(len(fit_loader.dataset), 1)
+                    max_steps = max(int(round(max_steps * ratio)), 1)
+                elif self.refit_scaling != "steps":
+                    raise ValueError(f"refit_scaling must be 'steps' or 'epochs', got {self.refit_scaling!r}")
+                logger.info(
+                    "member %d: best validation loss %.4f at epoch %d; refitting on the full "
+                    "series for %d steps (%s scaling)",
+                    member,
+                    probe.best_validation_loss,
+                    probe.best_epoch,
+                    max_steps,
+                    self.refit_scaling,
+                )
             trainer = Trainer(
                 self.model,
-                self.n_iter,
+                n_iter,
                 learning_rate=self.learning_rate,
-                validation_loader=self._validation_loader,
-                seed=member,
+                validation_loader=None if early_stopping_loaders is not None else self._validation_loader,
+                seed=seed,
+                eval_every=self.eval_every,
+                patience=self.patience,
+                max_steps=max_steps,
             )
             params_list.append(trainer.train(data_loader, self._loss).params)
         self._params = params_list[0]
