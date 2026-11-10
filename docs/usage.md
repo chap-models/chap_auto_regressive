@@ -42,7 +42,8 @@ defaults, so you only set the ones you need:
 | `n_iter` | `1000` | Number of training epochs (full passes over the training windows). More iterations train longer and can fit better at the cost of time; very high values risk overfitting. |
 | `context_length` | `24` | How many past periods the model reads as history before forecasting — roughly a year is typical (12 months or 52 weeks). |
 | `prediction_length` | `3` | How many periods ahead to forecast (the horizon). |
-| `learning_rate` | `1e-4` | The Adam step size. Smaller is more stable but converges more slowly. |
+| `learning_rate` | `1e-4` | The Adam step size. Smaller is more stable but converges more slowly. With a schedule, the start and end rate. |
+| `lr_schedule` | `"constant"` | `"warmup_cosine"` warms up linearly to `peak_learning_rate` (default `1e-3`) over `warmup_epochs` (default 5), then cosine-decays back to `learning_rate` at the end of `n_iter`. It reaches the constant-rate score in far fewer epochs on large panels. |
 | `rnn_model_name` | `"base"` | Which architecture to build — `"base"`, or `"multi_value"` which also mixes the target across locations. |
 
 In the CHAP models these are set in `model.py`'s `build_model()`. There, `n_iter`

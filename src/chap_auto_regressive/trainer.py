@@ -59,7 +59,7 @@ class Trainer:
         self,
         model: Any,
         n_iter: int = 3000,
-        learning_rate: float = 1e-5,
+        learning_rate: float | optax.Schedule = 1e-5,
         validation_loader: Optional[DataLoader] = None,
         seed: int = 0,
         eval_every: int = 5,
@@ -71,7 +71,7 @@ class Trainer:
         Args:
             model: The flax module to fit.
             n_iter: Number of epochs (full passes over the windows).
-            learning_rate: Adam learning rate.
+            learning_rate: Adam learning rate, or an optax schedule over steps.
             validation_loader: Optional loader providing a held-out window for
                 periodic validation-loss reporting.
             seed: Seed for parameter initialization and dropout, so independently
